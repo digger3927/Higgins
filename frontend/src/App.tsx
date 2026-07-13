@@ -21,7 +21,8 @@ import {
   FolderOpen,
   ArrowUp,
   Brain,
-  Edit2
+  Edit2,
+  Square
 } from 'lucide-react';
 import { marked } from 'marked';
 import './App.css';
@@ -101,6 +102,7 @@ function App() {
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('google/gemini-2.5-flash');
   const [isGenerating, setIsGenerating] = useState(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [webSearchEnabled, setWebSearchEnabled] = useState(() => {
     const saved = localStorage.getItem('webSearchEnabled');
     return saved === null ? true : saved === 'true';
@@ -788,6 +790,9 @@ function App() {
       return c;
     }));
 
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       const response = await fetch('http://localhost:8000/api/chat', {
         method: 'POST',
@@ -801,6 +806,7 @@ function App() {
           web_search_enabled: webSearchEnabled,
           local_brain_enabled: localBrainEnabled
         }),
+        signal: controller.signal,
       });
 
       if (!response.ok) {
@@ -875,7 +881,15 @@ function App() {
         return c;
       }));
     } finally {
+      abortControllerRef.current = null;
       setIsGenerating(false);
+    }
+  };
+
+  const handleStop = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
   };
 
@@ -1403,13 +1417,24 @@ function App() {
                 <span>Enter to send</span>
                 <span>Shift + Enter for new line</span>
               </div>
-              <button 
-                className="send-button"
-                onClick={handleSend}
-                disabled={!input.trim() || isGenerating || !isKeyConfigured()}
-              >
-                <Send size={14} />
-              </button>
+              {isGenerating ? (
+                <button 
+                  className="send-button"
+                  onClick={handleStop}
+                  title="Stop generating"
+                  style={{ background: 'var(--accent-red, #ef4444)' }}
+                >
+                  <Square size={14} fill="white" />
+                </button>
+              ) : (
+                <button 
+                  className="send-button"
+                  onClick={handleSend}
+                  disabled={!input.trim() || !isKeyConfigured()}
+                >
+                  <Send size={14} />
+                </button>
+              )}
             </div>
           </div>
         </div>
