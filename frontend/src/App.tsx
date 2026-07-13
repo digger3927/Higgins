@@ -579,6 +579,7 @@ function App() {
   const [isSplitView, setIsSplitView] = useState(true);
   const [isVimMode, setIsVimMode] = useState(false);
   const [isDocModified, setIsDocModified] = useState(false);
+  const [docSearchQuery, setDocSearchQuery] = useState('');
   const [selectedResearchSession, setSelectedResearchSession] = useState<ResearchSessionFull | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [researchError, setResearchError] = useState<string | null>(null);
@@ -934,16 +935,8 @@ function App() {
   };
 
   const handleOpenFileForEditing = async (path: string) => {
-    try {
-      const res = await fetch(`http://localhost:8000/api/project/file?path=${encodeURIComponent(path)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setEditingFilePath(data.path);
-        setEditingFileContent(data.content);
-      }
-    } catch (e) {
-      console.error('Failed to load file for editing:', e);
-    }
+    setActiveTab('documents');
+    openDocument(path);
   };
 
   const handleSaveEditedFile = async () => {
@@ -2376,7 +2369,47 @@ function App() {
 
             <div className="sidebar-divider"></div>
 
-            {/* Split View Toggle for Documents tab */}
+            {/* Folder Browser Section */}
+            <div style={{ padding: '0 12px 12px 12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span className="sidebar-label" style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Working Folder</span>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  readOnly
+                  value={projectName || 'Higgins (Default)'}
+                  style={{ flex: 1, fontSize: '12.5px', height: '28px', background: 'rgba(255,255,255,0.02)' }}
+                  title={activeProjectPath || ''}
+                />
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    setIsProjectFolderPicker(true);
+                    handleOpenFolderPicker(activeProjectPath);
+                  }}
+                  style={{ padding: '2px 8px', fontSize: '11px', height: '28px', display: 'flex', alignItems: 'center' }}
+                >
+                  Browse
+                </button>
+              </div>
+            </div>
+
+            {/* Live Document Search */}
+            <div style={{ padding: '0 12px 12px 12px' }}>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="🔍 Search files..."
+                value={docSearchQuery}
+                onChange={e => setDocSearchQuery(e.target.value)}
+                style={{ width: '100%', fontSize: '12px', height: '28px' }}
+              />
+            </div>
+
+            <div className="sidebar-divider"></div>
+
+            {/* Options */}
             <div style={{ padding: '0 12px 12px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
                 <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>Split Screen Editor</span>
@@ -2404,7 +2437,7 @@ function App() {
                 </div>
                 {projectFiles.length === 0 ? (
                   <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px 12px' }}>
-                    No project selected or empty folder.
+                    No files found in folder.
                   </div>
                 ) : (
                   projectFiles
@@ -2419,9 +2452,10 @@ function App() {
                       f.toLowerCase().endsWith('.css') ||
                       f.toLowerCase().endsWith('.html')
                     )
+                    .filter(f => f.toLowerCase().includes(docSearchQuery.toLowerCase()))
                     .map((filePath) => {
                       const isActive = activeDocPath === filePath;
-                      const displayName = filePath.split('/').pop() || filePath;
+                      const displayName = filePath; // Keep path info so subfolders are visible
                       return (
                         <div
                           key={filePath}
@@ -2431,7 +2465,7 @@ function App() {
                         >
                           <div className="chat-item-title-container">
                             <FileText size={14} className="nav-item-icon" style={{ color: isActive ? 'var(--accent-purple)' : 'var(--text-secondary)' }} />
-                            <span className="chat-item-title">{displayName}</span>
+                            <span className="chat-item-title" style={{ fontSize: '12px' }}>{displayName}</span>
                           </div>
                         </div>
                       );
