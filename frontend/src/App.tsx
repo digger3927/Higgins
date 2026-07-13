@@ -83,7 +83,10 @@ function App() {
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('google/gemini-2.5-flash');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(() => localStorage.getItem('webSearchEnabled') === 'true');
+  const [webSearchEnabled, setWebSearchEnabled] = useState(() => {
+    const saved = localStorage.getItem('webSearchEnabled');
+    return saved === null ? true : saved === 'true';
+  });
   const [localBrainEnabled, setLocalBrainEnabled] = useState(() => localStorage.getItem('localBrainEnabled') === 'true');
   const [expandedSources, setExpandedSources] = useState<Record<number, boolean>>({});
   
