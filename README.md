@@ -58,6 +58,18 @@ Select any folder as an active project. Higgins will:
 - **Write and edit files** directly from chat responses
 - Show a sliding file explorer panel with a built-in code editor
 
+### 🔍 Deep Research
+Need more than a quick search? Launch the Deep Research Strategist. Higgins will:
+- Draft a multi-point research strategy based on your query
+- Run sequential search query loops, crawling raw HTML page contents (cleaning styling/ads/boilerplate with `BeautifulSoup`)
+- Iteratively extract evidence and compile a massive, magazine-quality 1500+ word markdown report complete with an inline cited sources bibliography panel
+
+### 📝 Docs (Split-Screen Vim Editor)
+A built-in lightweight workspace document tool. Higgins will:
+- Let you open, edit, and save `.txt` or `.md` files from the "Docs" tab
+- Support a side-by-side **split-screen layout** so you can view/type in the document next to the chat or deep research panels
+- Toggle a custom **Vim Emulation Mode** key handler with Command, Insert (`i`/`Esc`), Normal Mode navigation (`h/j/k/l`, `w/b`, `0/$`), line deletion/copying (`dd`, `yy`, `p`), undo (`u`), and save commands (`:w`, `:q`, `:wq`)
+
 ### 📌 Chat Management
 - **Pin** important conversations
 - **Archive** old ones to keep the sidebar clean
