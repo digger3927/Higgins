@@ -51,6 +51,8 @@ class Settings(BaseModel):
     serper_api_key: Optional[str] = None
     # Local Brain Directory
     brain_directory: Optional[str] = None
+    # Active Project Path
+    active_project_path: Optional[str] = None
 
 class Message(BaseModel):
     role: str
@@ -84,7 +86,8 @@ def load_settings() -> Dict[str, Any]:
         "google_api_key": os.getenv("GOOGLE_API_KEY", ""),
         "google_cx": os.getenv("GOOGLE_CX", ""),
         "serper_api_key": os.getenv("SERPER_API_KEY", ""),
-        "brain_directory": ""
+        "brain_directory": "",
+        "active_project_path": ""
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -176,6 +179,10 @@ async def update_settings(settings: Settings):
     # Brain Settings
     if settings.brain_directory is not None:
         current["brain_directory"] = settings.brain_directory
+        
+    # Project Settings
+    if settings.active_project_path is not None:
+        current["active_project_path"] = settings.active_project_path
     
     save_settings(current)
     return current
@@ -371,6 +378,165 @@ async def delete_memory(memory_id: str):
     save_memory_db(db)
     return {"status": "success", "message": "Memory deleted"}
 
+# Project Management Routes
+class ProjectSelectPayload(BaseModel):
+    path: str
+
+class ProjectFileWritePayload(BaseModel):
+    path: str
+    content: str
+
+def get_project_files_recursive(project_path: str) -> List[str]:
+    files_list = []
+    exclude_dirs = {".git", "node_modules", "__pycache__", "venv", ".venv", "dist", "build"}
+    for root, dirs, files in os.walk(project_path):
+        dirs[:] = [d for d in dirs if d not in exclude_dirs and not d.startswith(".")]
+        for file in files:
+            if file.startswith("."):
+                continue
+            abs_file = os.path.join(root, file)
+            rel_path = os.path.relpath(abs_file, project_path)
+            files_list.append(rel_path)
+            
+    files_list.sort(key=str.lower)
+    return files_list
+
+@app.get("/api/project/status")
+async def get_project_status():
+    config = load_settings()
+    project_path = config.get("active_project_path", "")
+    
+    if not project_path:
+        return {
+            "active_project_path": "",
+            "project_name": "",
+            "metadata_content": "",
+            "files": []
+        }
+        
+    if not os.path.exists(project_path) or not os.path.isdir(project_path):
+        return {
+            "active_project_path": project_path,
+            "project_name": os.path.basename(project_path) or "Project",
+            "metadata_content": "Error: Selected project path does not exist on this machine.",
+            "files": []
+        }
+        
+    metadata_file = os.path.join(project_path, "GEMINI.MD")
+    if not os.path.exists(metadata_file):
+        try:
+            default_meta = f"""# Project Status & Context
+
+## Overview
+Describe the active project scope and purpose here.
+
+## Timeline of Events
+- {time.strftime('%Y-%m-%d %H:%M:%S')}: Project folder context initialized.
+
+## Key Constraints & Goals
+- Define goals here.
+"""
+            with open(metadata_file, "w") as f:
+                f.write(default_meta)
+            logger.info(f"Initialized GEMINI.MD in project path: {project_path}")
+        except Exception as e:
+            logger.error(f"Failed to create GEMINI.MD: {e}")
+            
+    metadata_content = ""
+    if os.path.exists(metadata_file):
+        try:
+            with open(metadata_file, "r") as f:
+                metadata_content = f.read()
+        except Exception as e:
+            metadata_content = f"Error reading GEMINI.MD: {e}"
+            
+    files = get_project_files_recursive(project_path)
+    
+    return {
+        "active_project_path": project_path,
+        "project_name": os.path.basename(project_path) or "Project",
+        "metadata_content": metadata_content,
+        "files": files
+    }
+
+@app.post("/api/project/select")
+async def select_project(payload: ProjectSelectPayload):
+    path = payload.path.strip()
+    if not path:
+        config = load_settings()
+        config["active_project_path"] = ""
+        save_settings(config)
+        return {"status": "success", "message": "Project cleared"}
+        
+    if not os.path.exists(path) or not os.path.isdir(path):
+        raise HTTPException(status_code=400, detail="Provided path is not a valid directory.")
+        
+    config = load_settings()
+    config["active_project_path"] = os.path.abspath(path)
+    save_settings(config)
+    
+    status = await get_project_status()
+    return {"status": "success", "message": "Project selected", "project_status": status}
+
+@app.get("/api/project/file")
+async def get_project_file(path: str):
+    config = load_settings()
+    project_path = config.get("active_project_path", "")
+    if not project_path:
+        raise HTTPException(status_code=400, detail="No active project folder selected.")
+        
+    safe_path = os.path.abspath(os.path.join(project_path, path))
+    if not safe_path.startswith(os.path.abspath(project_path)):
+        raise HTTPException(status_code=403, detail="Access denied: Path is outside the project root directory.")
+        
+    if not os.path.exists(safe_path) or os.path.isdir(safe_path):
+        raise HTTPException(status_code=404, detail="File not found")
+        
+    try:
+        with open(safe_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        return {"path": path, "content": content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/project/file")
+async def write_project_file(payload: ProjectFileWritePayload):
+    config = load_settings()
+    project_path = config.get("active_project_path", "")
+    if not project_path:
+        raise HTTPException(status_code=400, detail="No active project folder selected.")
+        
+    safe_path = os.path.abspath(os.path.join(project_path, payload.path))
+    if not safe_path.startswith(os.path.abspath(project_path)):
+        raise HTTPException(status_code=403, detail="Access denied: Path is outside the project root directory.")
+        
+    try:
+        os.makedirs(os.path.dirname(safe_path), exist_ok=True)
+        with open(safe_path, "w", encoding="utf-8") as f:
+            f.write(payload.content)
+        return {"status": "success", "message": f"Successfully wrote file: {payload.path}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+def process_project_file_actions(text: str):
+    config = load_settings()
+    project_path = config.get("active_project_path", "")
+    if not project_path or not os.path.exists(project_path) or not os.path.isdir(project_path):
+        return
+        
+    write_pattern = re.compile(r'<write_file\s+path=["\'](.*?)["\']\s*>(.*?)</write_file>', re.DOTALL)
+    for match in write_pattern.finditer(text):
+        rel_path, content = match.groups()
+        safe_path = os.path.abspath(os.path.join(project_path, rel_path))
+        if safe_path.startswith(os.path.abspath(project_path)):
+            try:
+                os.makedirs(os.path.dirname(safe_path), exist_ok=True)
+                with open(safe_path, "w", encoding="utf-8") as f:
+                    f.write(content.strip() + "\n")
+                logger.info(f"Project Agent successfully wrote file: {rel_path}")
+            except Exception as e:
+                logger.error(f"Failed to write project file {rel_path}: {e}")
+
 # Search Engine Crawlers & APIs
 async def search_duckduckgo(query: str) -> List[Dict[str, str]]:
     results = []
@@ -539,6 +705,7 @@ async def stream_gemini(api_key: str, model_name: str, messages: List[Dict[str, 
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk.text})}\n\n"
         
         save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
+        process_project_file_actions(accumulated_content)
         if background_tasks and user_prompt:
             background_tasks.add_task(extract_memories_task, user_prompt, accumulated_content)
         yield "data: [DONE]\n\n"
@@ -580,6 +747,7 @@ async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[s
                         data_str = line[6:]
                         if data_str == "[DONE]":
                             save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
+                            process_project_file_actions(accumulated_content)
                             if background_tasks and user_prompt:
                                 background_tasks.add_task(extract_memories_task, user_prompt, accumulated_content)
                             yield "data: [DONE]\n\n"
@@ -638,6 +806,7 @@ async def stream_ollama(model_name: str, messages: List[Dict[str, str]], chat_id
                         
                         if data_json.get("done", False):
                             save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
+                            process_project_file_actions(accumulated_content)
                             if background_tasks and user_prompt:
                                 background_tasks.add_task(extract_memories_task, user_prompt, accumulated_content)
                             yield "data: [DONE]\n\n"
@@ -1111,6 +1280,40 @@ async def chat(payload: ChatPayload, background_tasks: BackgroundTasks):
 {memory_context}
 
 """
+        
+    project_path = config.get("active_project_path", "")
+    project_block = ""
+    if project_path and os.path.exists(project_path) and os.path.isdir(project_path):
+        metadata_file = os.path.join(project_path, "GEMINI.MD")
+        metadata_content = ""
+        if os.path.exists(metadata_file):
+            try:
+                with open(metadata_file, "r", encoding="utf-8", errors="replace") as f:
+                    metadata_content = f.read()
+            except Exception as e:
+                logger.error(f"Error reading GEMINI.MD for prompt context: {e}")
+                
+        try:
+            files = get_project_files_recursive(project_path)
+            files_tree_str = "\n".join([f"- {f}" for f in files])
+        except Exception:
+            files_tree_str = ""
+            
+        project_block = f"""[Active Project Workspace Context (GEMINI.MD)]
+{metadata_content}
+
+[Active Project Workspace File Tree]
+{files_tree_str}
+
+[Active Project Commands / Tools Instructions]
+You are equipped with a code editing tool inside this project folder workspace.
+To create or overwrite files in the project folder, wrap the file content inside your reply in a `<write_file path="relative/path/to/file">...</write_file>` tag.
+You can write to any text/code file, including GEMINI.MD to update your timeline logs and active goals!
+Always keep GEMINI.MD updated with goals, timeline notes, and files you create.
+
+"""
+        
+    context_prefix = f"{memory_block}{project_block}"
     
     if len(messages_dict) > 0:
         last_user_message = messages_dict[-1]
@@ -1120,7 +1323,7 @@ async def chat(payload: ChatPayload, background_tasks: BackgroundTasks):
                 search_query = await generate_search_query(last_user_message["content"], payload.model, config)
                 search_context, web_results = await perform_web_search(search_query, config)
                 sources_metadata.extend(web_results)
-                combined_prompt = f"""{memory_block}[Web Search Results Context]
+                combined_prompt = f"""{context_prefix}[Web Search Results Context]
 {search_context}
 
 [Local Brain Context]
@@ -1134,7 +1337,7 @@ Please construct your answer using both the Web Search Context and the Local Bra
                 search_query = await generate_search_query(last_user_message["content"], payload.model, config)
                 search_context, web_results = await perform_web_search(search_query, config)
                 sources_metadata.extend(web_results)
-                context_prompt = f"""{memory_block}[Web Search Results Context]
+                context_prompt = f"""{context_prefix}[Web Search Results Context]
 {search_context}
 
 User Query: {last_user_message["content"]}
@@ -1142,18 +1345,18 @@ Please construct your answer using the search context above. DO NOT include a li
                 messages_dict[-1]["content"] = context_prompt
                 logger.info("Search context successfully injected into LLM payload.")
             elif payload.local_brain_enabled:
-                context_prompt = f"""{memory_block}[Local Brain Context]
+                context_prompt = f"""{context_prefix}[Local Brain Context]
 {brain_context}
 
 User Query: {last_user_message["content"]}
 Please construct your answer using the Local Brain Context chunks above. DO NOT include raw source lists or reference indices (like [1], [2]) in your final response. The interface displays sources separately. Write your reply cleanly."""
                 messages_dict[-1]["content"] = context_prompt
                 logger.info("Local Brain context successfully injected into LLM payload.")
-            elif memory_block:
-                context_prompt = f"""{memory_block}User Query: {last_user_message["content"]}
-Please answer the user query, taking into account any relevant facts, details, or preferences from the User Profile & Long-Term Memory context block above."""
+            elif context_prefix:
+                context_prompt = f"""{context_prefix}User Query: {last_user_message["content"]}
+Please answer the user query, taking into account any relevant project context or long-term preferences above."""
                 messages_dict[-1]["content"] = context_prompt
-                logger.info("Long-Term Memory context successfully injected into LLM payload.")
+                logger.info("Project & Memory context successfully injected into LLM payload.")
 
     # Save the updated user message (and context) to the history
     db["chats"][payload.chat_id]["messages"] = messages_dict

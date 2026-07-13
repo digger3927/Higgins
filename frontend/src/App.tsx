@@ -168,6 +168,17 @@ function App() {
   const [newMemoryInput, setNewMemoryInput] = useState('');
   const [isAddingMemory, setIsAddingMemory] = useState(false);
 
+  // Project Management States
+  const [activeProjectPath, setActiveProjectPath] = useState('');
+  const [projectName, setProjectName] = useState('');
+  const [projectMetadata, setProjectMetadata] = useState('');
+  const [projectFiles, setProjectFiles] = useState<string[]>([]);
+  const [isProjectPanelOpen, setIsProjectPanelOpen] = useState(() => localStorage.getItem('isProjectPanelOpen') === 'true');
+  const [editingFilePath, setEditingFilePath] = useState('');
+  const [editingFileContent, setEditingFileContent] = useState('');
+  const [isSavingFile, setIsSavingFile] = useState(false);
+  const [isProjectFolderPicker, setIsProjectFolderPicker] = useState(false);
+
   const [openRouterCatalog, setOpenRouterCatalog] = useState<{ id: string; name: string; context_length: number; prompt_price: string; completion_price: string }[]>([]);
   const [catalogSearchQuery, setCatalogSearchQuery] = useState('');
   const [isCatalogLoading, setIsCatalogLoading] = useState(false);
@@ -190,6 +201,7 @@ function App() {
     fetchChats();
     fetchModels();
     fetchBrainStatus();
+    fetchProjectStatus();
   }, []);
 
   // Auto-focus rename input
@@ -376,6 +388,70 @@ function App() {
       fetchMemories();
     }
   }, [isSettingsOpen, activeSettingsTab]);
+
+  const fetchProjectStatus = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/project/status');
+      if (res.ok) {
+        const data = await res.json();
+        setActiveProjectPath(data.active_project_path);
+        setProjectName(data.project_name);
+        setProjectMetadata(data.metadata_content);
+        setProjectFiles(data.files);
+      }
+    } catch (e) {
+      console.error('Failed to fetch project status:', e);
+    }
+  };
+
+  const handleSelectProjectFolder = async (path: string) => {
+    try {
+      const res = await fetch('http://localhost:8000/api/project/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path })
+      });
+      if (res.ok) {
+        await fetchProjectStatus();
+      }
+    } catch (e) {
+      console.error('Failed to select project:', e);
+    }
+  };
+
+  const handleOpenFileForEditing = async (path: string) => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/project/file?path=${encodeURIComponent(path)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setEditingFilePath(data.path);
+        setEditingFileContent(data.content);
+      }
+    } catch (e) {
+      console.error('Failed to load file for editing:', e);
+    }
+  };
+
+  const handleSaveEditedFile = async () => {
+    if (!editingFilePath) return;
+    setIsSavingFile(true);
+    try {
+      const res = await fetch('http://localhost:8000/api/project/file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: editingFilePath, content: editingFileContent })
+      });
+      if (res.ok) {
+        setEditingFilePath('');
+        setEditingFileContent('');
+        await fetchProjectStatus();
+      }
+    } catch (e) {
+      console.error('Failed to save file:', e);
+    } finally {
+      setIsSavingFile(false);
+    }
+  };
 
   const fetchModels = async () => {
     try {
@@ -744,6 +820,7 @@ function App() {
       
       // Reload chats list to update auto-generated titles
       fetchChats(false);
+      fetchProjectStatus();
       
     } catch (err: any) {
       console.error('Chat error:', err);
@@ -989,9 +1066,37 @@ function App() {
             </span>
           </div>
 
-          <div style={{ color: 'var(--text-muted)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Info size={14} />
-            <span>Local Storage Active</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Info size={14} />
+              <span>Local Storage Active</span>
+            </div>
+            
+            <button
+              className={`chat-header-btn ${isProjectPanelOpen ? 'active' : ''}`}
+              title="Toggle Project Panel"
+              onClick={() => {
+                const newVal = !isProjectPanelOpen;
+                setIsProjectPanelOpen(newVal);
+                localStorage.setItem('isProjectPanelOpen', String(newVal));
+              }}
+              style={{
+                background: isProjectPanelOpen ? 'rgba(168, 85, 247, 0.15)' : 'transparent',
+                border: '1px solid var(--border-glass)',
+                color: isProjectPanelOpen ? 'var(--accent-purple)' : 'var(--text-secondary)',
+                borderRadius: '6px',
+                padding: '6px 10px',
+                cursor: 'pointer',
+                fontSize: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                transition: 'all 0.2s ease'
+              }}
+            >
+              <Folder size={14} />
+              <span>{projectName ? `Project: ${projectName}` : 'Select Project'}</span>
+            </button>
           </div>
         </header>
 
@@ -1197,6 +1302,172 @@ function App() {
           </div>
         </div>
       </main>
+
+      {isProjectPanelOpen && (
+        <aside className="project-panel glass-panel animate-slide-in">
+          <div className="project-panel-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Folder size={18} color="var(--accent-purple)" />
+              <h3 className="project-panel-title">
+                {projectName ? projectName : 'No Project Active'}
+              </h3>
+            </div>
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ padding: '4px 8px', fontSize: '11px' }}
+              onClick={() => {
+                setIsProjectFolderPicker(true);
+                handleOpenFolderPicker(activeProjectPath);
+              }}
+            >
+              Change
+            </button>
+          </div>
+          
+          <div className="project-panel-content">
+            {activeProjectPath ? (
+              <>
+                <div className="project-section-card">
+                  <div className="project-section-header">
+                    <span className="project-section-title">Context File (GEMINI.MD)</span>
+                    <button
+                      type="button"
+                      className="chat-action-btn"
+                      title="Edit GEMINI.MD"
+                      onClick={() => handleOpenFileForEditing("GEMINI.MD")}
+                    >
+                      <Edit2 size={12} />
+                    </button>
+                  </div>
+                  <div className="project-metadata-preview">
+                    {projectMetadata ? (
+                      <pre className="metadata-pre">{projectMetadata}</pre>
+                    ) : (
+                      <span className="no-files-text">Initializing or empty GEMINI.MD...</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="project-section-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                  <div className="project-section-header">
+                    <span className="project-section-title">Project Files Explorer</span>
+                    <button
+                      type="button"
+                      className="chat-header-btn"
+                      onClick={() => {
+                        const newFilename = prompt("Enter relative file path (e.g. src/utils.py):");
+                        if (newFilename) {
+                          setEditingFilePath(newFilename.trim());
+                          setEditingFileContent("");
+                        }
+                      }}
+                      style={{ fontSize: '11px', padding: '2px 8px', border: '1px solid var(--border-glass)' }}
+                    >
+                      + New File
+                    </button>
+                  </div>
+                  <div className="project-files-list">
+                    {projectFiles.length === 0 ? (
+                      <div className="no-files-text">No files found in project folder directory.</div>
+                    ) : (
+                      projectFiles.map(file => (
+                        <div
+                          key={file}
+                          className="project-file-row"
+                          onClick={() => handleOpenFileForEditing(file)}
+                        >
+                          <FolderOpen size={13} color="var(--accent-purple)" style={{ marginRight: '6px', flexShrink: 0 }} />
+                          <span className="project-file-name" title={file}>{file}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="project-empty-state">
+                <p>Select a project folder to use its files as context and enable write tools.</p>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={() => {
+                    setIsProjectFolderPicker(true);
+                    handleOpenFolderPicker("");
+                  }}
+                  style={{ background: 'var(--accent-purple)', borderColor: 'var(--accent-purple)' }}
+                >
+                  Select Folder
+                </button>
+              </div>
+            )}
+          </div>
+        </aside>
+      )}
+
+      {/* File Editor Modal */}
+      {editingFilePath !== '' && (
+        <div className="modal-overlay" style={{ zIndex: 1200 }}>
+          <div className="modal-content glass-panel" style={{ width: '80%', height: '80%', display: 'flex', flexDirection: 'column' }}>
+            <div className="modal-header">
+              <h3 className="modal-title" style={{ fontSize: '15px' }}>
+                ✏️ Editing: <code style={{ color: 'var(--accent-purple)' }}>{editingFilePath}</code>
+              </h3>
+              <button 
+                className="close-btn"
+                onClick={() => {
+                  setEditingFilePath('');
+                  setEditingFileContent('');
+                }}
+              >
+                &times;
+              </button>
+            </div>
+            
+            <div style={{ flex: 1, minHeight: 0, margin: '12px 0' }}>
+              <textarea
+                className="form-input"
+                style={{
+                  width: '100%',
+                  height: '100%',
+                  fontFamily: 'monospace',
+                  fontSize: '13px',
+                  backgroundColor: 'rgba(0,0,0,0.2)',
+                  color: 'var(--text-primary)',
+                  resize: 'none',
+                  padding: '12px',
+                  border: '1px solid var(--border-glass)',
+                  borderRadius: 'var(--radius-sm)'
+                }}
+                value={editingFileContent}
+                onChange={e => setEditingFileContent(e.target.value)}
+              />
+            </div>
+            
+            <div className="modal-actions" style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '12px' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setEditingFilePath('');
+                  setEditingFileContent('');
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ background: 'var(--accent-purple)', borderColor: 'var(--accent-purple)' }}
+                disabled={isSavingFile}
+                onClick={handleSaveEditedFile}
+              >
+                {isSavingFile ? 'Saving...' : 'Save File'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Settings Modal */}
       {isSettingsOpen && (
@@ -1716,7 +1987,11 @@ function App() {
                 className="btn-primary"
                 style={{ background: 'var(--accent-purple)', borderColor: 'var(--accent-purple)' }}
                 onClick={() => {
-                  setBrainDirectoryInput(pickerCurrentPath);
+                  if (isProjectFolderPicker) {
+                    handleSelectProjectFolder(pickerCurrentPath);
+                  } else {
+                    setBrainDirectoryInput(pickerCurrentPath);
+                  }
                   setIsFolderPickerOpen(false);
                 }}
               >
