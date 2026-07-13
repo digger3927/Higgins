@@ -521,9 +521,12 @@ async def get_project_file(path: str):
     if not project_path:
         project_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
-    safe_path = os.path.abspath(os.path.join(project_path, path))
-    if not safe_path.startswith(os.path.abspath(project_path)):
-        raise HTTPException(status_code=403, detail="Access denied: Path is outside the project root directory.")
+    if os.path.isabs(path):
+        safe_path = os.path.abspath(path)
+    else:
+        safe_path = os.path.abspath(os.path.join(project_path, path))
+        if not safe_path.startswith(os.path.abspath(project_path)):
+            raise HTTPException(status_code=403, detail="Access denied: Path is outside the project root directory.")
         
     if not os.path.exists(safe_path) or os.path.isdir(safe_path):
         raise HTTPException(status_code=404, detail="File not found")
@@ -542,9 +545,12 @@ async def write_project_file(payload: ProjectFileWritePayload):
     if not project_path:
         project_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
-    safe_path = os.path.abspath(os.path.join(project_path, payload.path))
-    if not safe_path.startswith(os.path.abspath(project_path)):
-        raise HTTPException(status_code=403, detail="Access denied: Path is outside the project root directory.")
+    if os.path.isabs(payload.path):
+        safe_path = os.path.abspath(payload.path)
+    else:
+        safe_path = os.path.abspath(os.path.join(project_path, payload.path))
+        if not safe_path.startswith(os.path.abspath(project_path)):
+            raise HTTPException(status_code=403, detail="Access denied: Path is outside the project root directory.")
         
     try:
         os.makedirs(os.path.dirname(safe_path), exist_ok=True)

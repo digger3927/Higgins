@@ -580,6 +580,10 @@ function App() {
   const [isVimMode, setIsVimMode] = useState(false);
   const [isDocModified, setIsDocModified] = useState(false);
   const [docSearchQuery, setDocSearchQuery] = useState('');
+  const [recentDocs, setRecentDocs] = useState<string[]>(() => {
+    const saved = localStorage.getItem('recentDocs');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [selectedResearchSession, setSelectedResearchSession] = useState<ResearchSessionFull | null>(null);
   const [isCopied, setIsCopied] = useState(false);
   const [researchError, setResearchError] = useState<string | null>(null);
@@ -1175,6 +1179,13 @@ function App() {
         setActiveDocPath(data.path);
         setActiveDocContent(data.content);
         setIsDocModified(false);
+        
+        // Add to recent docs list
+        setRecentDocs(prev => {
+          const next = [data.path, ...prev.filter(p => p !== data.path)].slice(0, 10);
+          localStorage.setItem('recentDocs', JSON.stringify(next));
+          return next;
+        });
       }
     } catch (e) {
       console.error('Failed to open document:', e);
@@ -2431,6 +2442,32 @@ function App() {
 
             {/* Documents History list */}
             <div className="chats-section" style={{ flex: 1, overflowY: 'auto' }}>
+              {/* Recent Documents */}
+              {recentDocs.length > 0 && (
+                <div className="chats-group" style={{ marginBottom: '16px' }}>
+                  <div className="group-header">
+                    <span>Recent Documents</span>
+                  </div>
+                  {recentDocs.map((filePath) => {
+                    const isActive = activeDocPath === filePath;
+                    const displayName = filePath.split('/').pop() || filePath;
+                    return (
+                      <div
+                        key={filePath}
+                        className={`chat-list-item ${isActive ? 'active' : ''}`}
+                        onClick={() => openDocument(filePath)}
+                        title={filePath}
+                      >
+                        <div className="chat-item-title-container">
+                          <FileText size={14} className="nav-item-icon" style={{ color: isActive ? 'var(--accent-purple)' : 'var(--text-secondary)' }} />
+                          <span className="chat-item-title" style={{ fontSize: '12px' }}>{displayName}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               <div className="chats-group">
                 <div className="group-header">
                   <span>Workspace Files</span>
