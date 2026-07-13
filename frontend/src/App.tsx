@@ -957,7 +957,7 @@ function App() {
             onClick={() => setIsSettingsOpen(true)}
           >
             <Settings size={16} />
-            <span>API Settings</span>
+            <span>Settings</span>
           </button>
         </div>
       </aside>
