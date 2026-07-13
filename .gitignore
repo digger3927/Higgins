@@ -1,0 +1,28 @@
+# Local Configuration & Chat Databases (Crucial for API keys security)
+config.json
+chats.json
+.env
+*.env
+
+# Python Virtual Environments & Caches
+backend/venv/
+backend/.venv/
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Node/Vite Dependency Folders & Production Bundles
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+*.log
+
+# OS Metadata Files
+.DS_Store
+Thumbs.db
