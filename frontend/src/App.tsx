@@ -83,8 +83,8 @@ function App() {
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('google/gemini-2.5-flash');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
-  const [localBrainEnabled, setLocalBrainEnabled] = useState(false);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(() => localStorage.getItem('webSearchEnabled') === 'true');
+  const [localBrainEnabled, setLocalBrainEnabled] = useState(() => localStorage.getItem('localBrainEnabled') === 'true');
   const [expandedSources, setExpandedSources] = useState<Record<number, boolean>>({});
   
   // Settings States
@@ -991,7 +991,11 @@ function App() {
                   type="button"
                   className={`search-toggle-btn ${webSearchEnabled ? 'active' : ''}`}
                   title="Toggle Web Search"
-                  onClick={() => setWebSearchEnabled(!webSearchEnabled)}
+                  onClick={() => {
+                    const val = !webSearchEnabled;
+                    setWebSearchEnabled(val);
+                    localStorage.setItem('webSearchEnabled', String(val));
+                  }}
                   disabled={!isKeyConfigured() || isGenerating || !activeChatId}
                   style={{
                     background: 'transparent',
@@ -1016,7 +1020,11 @@ function App() {
                   type="button"
                   className={`search-toggle-btn ${localBrainEnabled ? 'active-purple' : ''}`}
                   title="Toggle Local Brain Search"
-                  onClick={() => setLocalBrainEnabled(!localBrainEnabled)}
+                  onClick={() => {
+                    const val = !localBrainEnabled;
+                    setLocalBrainEnabled(val);
+                    localStorage.setItem('localBrainEnabled', String(val));
+                  }}
                   disabled={!isKeyConfigured() || isGenerating || !activeChatId}
                   style={{
                     background: 'transparent',
