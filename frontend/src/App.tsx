@@ -178,6 +178,8 @@ function App() {
   const [editingFileContent, setEditingFileContent] = useState('');
   const [isSavingFile, setIsSavingFile] = useState(false);
   const [isProjectFolderPicker, setIsProjectFolderPicker] = useState(false);
+  const [projectHistory, setProjectHistory] = useState<{path: string; name: string}[]>([]);
+  const [isProjectsExpanded, setIsProjectsExpanded] = useState(false);
 
   const [openRouterCatalog, setOpenRouterCatalog] = useState<{ id: string; name: string; context_length: number; prompt_price: string; completion_price: string }[]>([]);
   const [catalogSearchQuery, setCatalogSearchQuery] = useState('');
@@ -202,6 +204,7 @@ function App() {
     fetchModels();
     fetchBrainStatus();
     fetchProjectStatus();
+    fetchProjects();
   }, []);
 
   // Auto-focus rename input
@@ -404,6 +407,38 @@ function App() {
     }
   };
 
+  const fetchProjects = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/projects');
+      if (res.ok) {
+        const data = await res.json();
+        setProjectHistory(data.projects || []);
+      }
+    } catch (e) {
+      console.error('Failed to fetch projects:', e);
+    }
+  };
+
+  const handleRemoveProject = async (path: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      const res = await fetch(`http://localhost:8000/api/projects?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+      if (res.ok) {
+        await fetchProjects();
+        if (activeProjectPath === path) {
+          setActiveProjectPath('');
+          setProjectName('');
+          setProjectMetadata('');
+          setProjectFiles([]);
+          setIsProjectPanelOpen(false);
+          localStorage.setItem('isProjectPanelOpen', 'false');
+        }
+      }
+    } catch (e) {
+      console.error('Failed to remove project:', e);
+    }
+  };
+
   const handleSelectProjectFolder = async (path: string) => {
     try {
       const res = await fetch('http://localhost:8000/api/project/select', {
@@ -413,6 +448,9 @@ function App() {
       });
       if (res.ok) {
         await fetchProjectStatus();
+        await fetchProjects();
+        setIsProjectPanelOpen(true);
+        localStorage.setItem('isProjectPanelOpen', 'true');
       }
     } catch (e) {
       console.error('Failed to select project:', e);
@@ -964,6 +1002,105 @@ function App() {
 
         <div className="sidebar-divider"></div>
 
+        {/* Projects Section */}
+        <div className="chats-group" style={{ padding: '0 8px' }}>
+          <div 
+            className="group-header"
+            style={{ cursor: 'default' }}
+          >
+            <span>Projects</span>
+            <button
+              type="button"
+              title="Add Project"
+              onClick={() => {
+                setIsProjectFolderPicker(true);
+                handleOpenFolderPicker('');
+              }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--text-muted)',
+                cursor: 'pointer',
+                padding: '2px',
+                display: 'flex',
+                alignItems: 'center',
+                borderRadius: '4px',
+                transition: 'var(--transition-smooth)'
+              }}
+              onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent-purple)')}
+              onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
+            >
+              <Plus size={14} />
+            </button>
+          </div>
+          {projectHistory.length === 0 ? (
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '4px 12px' }}>
+              No projects yet
+            </div>
+          ) : (
+            <>
+              {(isProjectsExpanded ? projectHistory : projectHistory.slice(0, 5)).map((proj) => {
+                const isActive = proj.path === activeProjectPath;
+                return (
+                  <div
+                    key={proj.path}
+                    className={`chat-list-item ${isActive ? 'active' : ''}`}
+                    onClick={async () => {
+                      if (isActive) {
+                        const newVal = !isProjectPanelOpen;
+                        setIsProjectPanelOpen(newVal);
+                        localStorage.setItem('isProjectPanelOpen', String(newVal));
+                      } else {
+                        await handleSelectProjectFolder(proj.path);
+                      }
+                    }}
+                    title={proj.path}
+                  >
+                    <div className="chat-item-title-container">
+                      {isActive ? <FolderOpen size={14} className="nav-item-icon" style={{ color: 'var(--accent-purple)' }} /> : <Folder size={14} className="nav-item-icon" />}
+                      <span className="chat-item-title">{proj.name}</span>
+                    </div>
+                    <div className="chat-item-actions">
+                      <button
+                        className="chat-action-btn"
+                        title="Remove from list"
+                        onClick={(e) => handleRemoveProject(proj.path, e)}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {projectHistory.length > 5 && (
+                <button
+                  type="button"
+                  onClick={() => setIsProjectsExpanded(!isProjectsExpanded)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    fontSize: '11px',
+                    padding: '4px 12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    transition: 'var(--transition-smooth)'
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent-purple)')}
+                  onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
+                >
+                  {isProjectsExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                  {isProjectsExpanded ? 'Show less' : `Show all (${projectHistory.length})`}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="sidebar-divider"></div>
+
         {/* Model Selector */}
         <div className="model-selector-container">
           <div className="sidebar-label">Active Model</div>
@@ -1072,31 +1209,6 @@ function App() {
               <span>Local Storage Active</span>
             </div>
             
-            <button
-              className={`chat-header-btn ${isProjectPanelOpen ? 'active' : ''}`}
-              title="Toggle Project Panel"
-              onClick={() => {
-                const newVal = !isProjectPanelOpen;
-                setIsProjectPanelOpen(newVal);
-                localStorage.setItem('isProjectPanelOpen', String(newVal));
-              }}
-              style={{
-                background: isProjectPanelOpen ? 'rgba(168, 85, 247, 0.15)' : 'transparent',
-                border: '1px solid var(--border-glass)',
-                color: isProjectPanelOpen ? 'var(--accent-purple)' : 'var(--text-secondary)',
-                borderRadius: '6px',
-                padding: '6px 10px',
-                cursor: 'pointer',
-                fontSize: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                transition: 'all 0.2s ease'
-              }}
-            >
-              <Folder size={14} />
-              <span>{projectName ? `Project: ${projectName}` : 'Select Project'}</span>
-            </button>
           </div>
         </header>
 

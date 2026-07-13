@@ -472,11 +472,42 @@ async def select_project(payload: ProjectSelectPayload):
         raise HTTPException(status_code=400, detail="Provided path is not a valid directory.")
         
     config = load_settings()
-    config["active_project_path"] = os.path.abspath(path)
+    abs_path = os.path.abspath(path)
+    config["active_project_path"] = abs_path
+    
+    # Maintain project history (most-recently-used first, capped at 20)
+    history = config.get("project_history", [])
+    entry = {"path": abs_path, "name": os.path.basename(abs_path) or "Project"}
+    # Remove existing entry if present (to move it to front)
+    history = [h for h in history if h.get("path") != abs_path]
+    history.insert(0, entry)
+    config["project_history"] = history[:20]
+    
     save_settings(config)
     
     status = await get_project_status()
     return {"status": "success", "message": "Project selected", "project_status": status}
+
+@app.get("/api/projects")
+async def list_projects():
+    """Return the list of previously opened projects."""
+    config = load_settings()
+    history = config.get("project_history", [])
+    active = config.get("active_project_path", "")
+    return {"projects": history, "active_project_path": active}
+
+@app.delete("/api/projects")
+async def remove_project(path: str):
+    """Remove a project from the history list."""
+    config = load_settings()
+    history = config.get("project_history", [])
+    history = [h for h in history if h.get("path") != path]
+    config["project_history"] = history
+    # If the removed project was active, clear it
+    if config.get("active_project_path") == path:
+        config["active_project_path"] = ""
+    save_settings(config)
+    return {"status": "success"}
 
 @app.get("/api/project/file")
 async def get_project_file(path: str):
