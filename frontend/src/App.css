@@ -901,4 +901,30 @@
   color: var(--accent-blue) !important;
 }
 
+.search-toggle-btn.active-purple {
+  background: rgba(144, 97, 249, 0.1) !important;
+  border-color: rgba(144, 97, 249, 0.3) !important;
+  color: var(--accent-purple) !important;
+}
+
+@keyframes pulseGlowPurple {
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+    filter: drop-shadow(0 0 4px var(--accent-purple));
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+}
+
+.pulse-icon-purple {
+  animation: pulseGlowPurple 2s infinite ease-in-out;
+}
+
 

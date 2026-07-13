@@ -15,7 +15,8 @@ import {
   ChevronDown,
   ChevronRight,
   Plus,
-  Globe
+  Globe,
+  Database
 } from 'lucide-react';
 import './App.css';
 
@@ -45,6 +46,7 @@ interface SettingsConfig {
   google_api_key?: string;
   google_cx?: string;
   serper_api_key?: string;
+  brain_directory?: string;
 }
 
 const AVAILABLE_MODELS = [
@@ -78,6 +80,7 @@ function App() {
   const [selectedModel, setSelectedModel] = useState('google/gemini-2.5-flash');
   const [isGenerating, setIsGenerating] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
+  const [localBrainEnabled, setLocalBrainEnabled] = useState(false);
   
   // Settings States
   const [settings, setSettings] = useState<SettingsConfig>({
@@ -90,7 +93,8 @@ function App() {
     brave_api_key: '',
     google_api_key: '',
     google_cx: '',
-    serper_api_key: ''
+    serper_api_key: '',
+    brain_directory: ''
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
@@ -99,9 +103,27 @@ function App() {
   // Temp keys for the settings form
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [openrouterKeyInput, setOpenRouterKeyInput] = useState('');
+  const [brainDirectoryInput, setBrainDirectoryInput] = useState('');
+  
+  // Brain status & indexing states
+  const [brainStatus, setBrainStatus] = useState<{
+    brain_directory: string;
+    is_indexed: boolean;
+    file_count: number;
+    chunk_count: number;
+    last_indexed: number;
+  }>({
+    brain_directory: '',
+    is_indexed: false,
+    file_count: 0,
+    chunk_count: 0,
+    last_indexed: 0
+  });
+  const [isIndexing, setIsIndexing] = useState(false);
+  const [indexingMessage, setIndexingMessage] = useState('');
 
   // Dynamic OpenRouter catalog state
-  const [activeSettingsTab, setActiveSettingsTab] = useState<'keys' | 'catalog' | 'search'>('keys');
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'keys' | 'catalog' | 'search' | 'brain'>('keys');
   const [openRouterCatalog, setOpenRouterCatalog] = useState<{ id: string; name: string; context_length: number; prompt_price: string; completion_price: string }[]>([]);
   const [catalogSearchQuery, setCatalogSearchQuery] = useState('');
   const [isCatalogLoading, setIsCatalogLoading] = useState(false);
@@ -123,6 +145,7 @@ function App() {
     fetchSettings();
     fetchChats();
     fetchModels();
+    fetchBrainStatus();
   }, []);
 
   // Auto-focus rename input
@@ -164,6 +187,7 @@ function App() {
         setGoogleKeyInput(data.google_api_key || '');
         setGoogleCxInput(data.google_cx || '');
         setSerperKeyInput(data.serper_api_key || '');
+        setBrainDirectoryInput(data.brain_directory || '');
         
         if (data.preferred_model && !activeChatId) {
           setSelectedModel(data.preferred_model);
@@ -171,6 +195,42 @@ function App() {
       }
     } catch (e) {
       console.error('Failed to fetch settings from backend:', e);
+    }
+  };
+
+  const fetchBrainStatus = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/brain/status');
+      if (res.ok) {
+        const data = await res.json();
+        setBrainStatus(data);
+        if (data.brain_directory) {
+          setBrainDirectoryInput(data.brain_directory);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to fetch brain status:', e);
+    }
+  };
+
+  const handleIndexBrain = async () => {
+    setIsIndexing(true);
+    setIndexingMessage('Scanning and chunking files...');
+    try {
+      const res = await fetch('http://localhost:8000/api/brain/index', {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setIndexingMessage(`Successfully indexed! Found ${data.file_count} files (${data.chunk_count} chunks).`);
+        fetchBrainStatus();
+      } else {
+        setIndexingMessage(`Failed to index: ${data.detail || 'Unknown error'}`);
+      }
+    } catch (e) {
+      setIndexingMessage(`Error calling index endpoint: ${e}`);
+    } finally {
+      setIsIndexing(false);
     }
   };
 
@@ -276,7 +336,8 @@ function App() {
           brave_api_key: braveKeyInput,
           google_api_key: googleKeyInput,
           google_cx: googleCxInput,
-          serper_api_key: serperKeyInput
+          serper_api_key: serperKeyInput,
+          brain_directory: brainDirectoryInput
         }),
       });
 
@@ -286,6 +347,7 @@ function App() {
         setIsSettingsOpen(false);
         // Refresh sidebar models list with selected OpenRouter choices
         fetchModels();
+        fetchBrainStatus();
       }
     } catch (e) {
       console.error('Failed to update settings:', e);
@@ -467,7 +529,8 @@ function App() {
           chat_id: activeChatId,
           messages: updatedMessages,
           model: selectedModel,
-          web_search_enabled: webSearchEnabled
+          web_search_enabled: webSearchEnabled,
+          local_brain_enabled: localBrainEnabled
         }),
       });
 
@@ -869,6 +932,32 @@ function App() {
                   <Globe size={14} className={webSearchEnabled ? 'pulse-icon' : ''} />
                   <span>Web Search</span>
                 </button>
+
+                <button
+                  type="button"
+                  className={`search-toggle-btn ${localBrainEnabled ? 'active-purple' : ''}`}
+                  title="Toggle Local Brain Search"
+                  onClick={() => setLocalBrainEnabled(!localBrainEnabled)}
+                  disabled={!isKeyConfigured() || isGenerating || !activeChatId}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: localBrainEnabled ? 'var(--accent-purple)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    transition: 'var(--transition-smooth)'
+                  }}
+                >
+                  <Database size={14} className={localBrainEnabled ? 'pulse-icon-purple' : ''} />
+                  <span>Local Brain</span>
+                </button>
+
                 <span className="sidebar-divider-v" style={{ width: '1px', height: '12px', background: 'var(--border-glass)' }}></span>
                 <span>Enter to send</span>
                 <span>Shift + Enter for new line</span>
@@ -920,6 +1009,13 @@ function App() {
                 onClick={() => setActiveSettingsTab('search')}
               >
                 Search Engines
+              </button>
+              <button 
+                type="button"
+                className={`modal-tab-btn ${activeSettingsTab === 'brain' ? 'active' : ''}`}
+                onClick={() => setActiveSettingsTab('brain')}
+              >
+                Local Brain
               </button>
             </div>
 
@@ -1068,6 +1164,67 @@ function App() {
                       </span>
                     </div>
                   )}
+                </div>
+              ) : activeSettingsTab === 'brain' ? (
+                <div style={{ flex: 1 }}>
+                  <div className="form-group">
+                    <label className="form-label">Local Brain Folder Path</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="/absolute/path/to/your/documents/folder"
+                      value={brainDirectoryInput}
+                      onChange={e => setBrainDirectoryInput(e.target.value)}
+                    />
+                    <span className="form-hint">
+                      Higgins will index and scan all text files, markdown files, and PDF documents in this directory recursively.
+                    </span>
+                  </div>
+                  
+                  <div style={{ marginTop: '20px', background: 'rgba(255,255,255,0.02)', padding: '16px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
+                    <h4 style={{ margin: 0, fontSize: '14px', color: 'var(--text-primary)' }}>Brain Statistics</h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', marginTop: '12px', fontSize: '13px' }}>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Status: </span>
+                        <span style={{ color: brainStatus.is_indexed ? 'var(--accent-green)' : 'var(--accent-red)', fontWeight: 500 }}>
+                          {brainStatus.is_indexed ? 'Indexed' : 'Not Indexed'}
+                        </span>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Last Scan: </span>
+                        <span>
+                          {brainStatus.last_indexed > 0 
+                            ? new Date(brainStatus.last_indexed * 1000).toLocaleString() 
+                            : 'Never'}
+                        </span>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Total Files: </span>
+                        <span>{brainStatus.file_count}</span>
+                      </div>
+                      <div>
+                        <span style={{ color: 'var(--text-muted)' }}>Context Chunks: </span>
+                        <span>{brainStatus.chunk_count}</span>
+                      </div>
+                    </div>
+                    
+                    <div style={{ marginTop: '16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={handleIndexBrain}
+                        disabled={isIndexing || !brainDirectoryInput.trim()}
+                        style={{ padding: '6px 12px', fontSize: '13px' }}
+                      >
+                        {isIndexing ? 'Indexing...' : 'Index Directory Now'}
+                      </button>
+                      {indexingMessage && (
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                          {indexingMessage}
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>

@@ -1,6 +1,7 @@
 # Local Configuration & Chat Databases (Crucial for API keys security)
 config.json
 chats.json
+brain.json
 .env
 *.env
 

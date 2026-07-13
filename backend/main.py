@@ -33,6 +33,7 @@ app.add_middleware(
 
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
 CHATS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chats.json")
+BRAIN_INDEX_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brain.json")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 class Settings(BaseModel):
@@ -47,6 +48,8 @@ class Settings(BaseModel):
     google_api_key: Optional[str] = None
     google_cx: Optional[str] = None
     serper_api_key: Optional[str] = None
+    # Local Brain Directory
+    brain_directory: Optional[str] = None
 
 class Message(BaseModel):
     role: str
@@ -57,6 +60,7 @@ class ChatPayload(BaseModel):
     messages: List[Message]
     model: str
     web_search_enabled: Optional[bool] = False
+    local_brain_enabled: Optional[bool] = False
 
 class ChatUpdatePayload(BaseModel):
     title: Optional[str] = None
@@ -78,7 +82,8 @@ def load_settings() -> Dict[str, Any]:
         "brave_api_key": os.getenv("BRAVE_API_KEY", ""),
         "google_api_key": os.getenv("GOOGLE_API_KEY", ""),
         "google_cx": os.getenv("GOOGLE_CX", ""),
-        "serper_api_key": os.getenv("SERPER_API_KEY", "")
+        "serper_api_key": os.getenv("SERPER_API_KEY", ""),
+        "brain_directory": ""
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -148,6 +153,10 @@ async def update_settings(settings: Settings):
         current["google_cx"] = settings.google_cx
     if settings.serper_api_key is not None:
         current["serper_api_key"] = settings.serper_api_key
+        
+    # Brain Settings
+    if settings.brain_directory is not None:
+        current["brain_directory"] = settings.brain_directory
     
     save_settings(current)
     return current
@@ -666,6 +675,145 @@ Output ONLY the optimized search keywords. No quotes, no prefix, no explanations
     logger.info(f"Heuristic fallback search query: '{fallback_query}'")
     return fallback_query
 
+# Local Brain Text Extraction & Search Ranking Helpers
+def extract_text_from_pdf(file_path: str) -> str:
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(file_path)
+        text = ""
+        for page in reader.pages:
+            content = page.extract_text()
+            if content:
+                text += content + "\n"
+        return text
+    except Exception as e:
+        logger.error(f"Error reading PDF {file_path}: {e}")
+        return ""
+
+def extract_text_from_file(file_path: str) -> str:
+    if file_path.lower().endswith(".pdf"):
+        return extract_text_from_pdf(file_path)
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except Exception as e:
+        logger.error(f"Error reading file {file_path}: {e}")
+        return ""
+
+def chunk_text(text: str, file_path: str, relative_path: str) -> List[Dict[str, Any]]:
+    chunks = []
+    chunk_size = 800
+    overlap = 150
+    cleaned_text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    start = 0
+    while start < len(cleaned_text):
+        end = start + chunk_size
+        chunk_content = cleaned_text[start:end]
+        chunks.append({
+            "text": chunk_content,
+            "source": relative_path,
+            "full_path": file_path
+        })
+        # Standard step size based on overlap
+        start += (chunk_size - overlap)
+    return chunks
+
+def search_brain_index(query: str, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    query_words = [w.lower() for w in re.sub(r'[^\w\s]', '', query).split() if len(w) > 2]
+    if not query_words:
+        query_words = [w.lower() for w in query.split()]
+        
+    scores = []
+    for chunk in chunks:
+        chunk_text_lower = chunk["text"].lower()
+        score = 0.0
+        
+        for word in query_words:
+            count = chunk_text_lower.count(word)
+            if count > 0:
+                # Term frequency scoring normalized by chunk length
+                score += (1.0 + count) / (1.0 + len(chunk_text_lower.split()) / 100.0)
+                
+        if score > 0:
+            scores.append((score, chunk))
+            
+    scores.sort(key=lambda x: x[0], reverse=True)
+    return [item[1] for item in scores[:5]]
+
+# Local Brain API Routes
+@app.get("/api/brain/status")
+async def get_brain_status():
+    config = load_settings()
+    directory = config.get("brain_directory", "")
+    is_indexed = os.path.exists(BRAIN_INDEX_FILE)
+    file_count = 0
+    chunk_count = 0
+    last_indexed = 0.0
+    
+    if is_indexed:
+        try:
+            with open(BRAIN_INDEX_FILE, "r") as f:
+                data = json.load(f)
+                chunk_count = len(data.get("chunks", []))
+                file_count = len(set(c["source"] for c in data.get("chunks", [])))
+                last_indexed = data.get("last_indexed", 0.0)
+        except Exception as e:
+            logger.error(f"Error loading brain status: {e}")
+            
+    return {
+        "brain_directory": directory,
+        "is_indexed": is_indexed,
+        "file_count": file_count,
+        "chunk_count": chunk_count,
+        "last_indexed": last_indexed
+    }
+
+@app.post("/api/brain/index")
+async def index_brain():
+    config = load_settings()
+    directory = config.get("brain_directory", "")
+    if not directory or not os.path.exists(directory):
+        raise HTTPException(status_code=400, detail="Invalid brain directory path. Configure it in settings first.")
+        
+    logger.info(f"Indexing brain directory: {directory}")
+    supported_extensions = (
+        ".txt", ".md", ".py", ".js", ".ts", ".tsx", 
+        ".json", ".csv", ".html", ".css", ".pdf"
+    )
+    
+    all_chunks = []
+    file_count = 0
+    
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if file.lower().endswith(supported_extensions):
+                full_path = os.path.join(root, file)
+                relative_path = os.path.relpath(full_path, directory)
+                text = extract_text_from_file(full_path)
+                if text.strip():
+                    chunks = chunk_text(text, full_path, relative_path)
+                    all_chunks.extend(chunks)
+                    file_count += 1
+                    
+    brain_db = {
+        "chunks": all_chunks,
+        "last_indexed": time.time()
+    }
+    
+    try:
+        with open(BRAIN_INDEX_FILE, "w") as f:
+            json.dump(brain_db, f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to write brain.json: {e}")
+        raise HTTPException(status_code=500, detail="Failed to write brain index database.")
+        
+    return {
+        "status": "success",
+        "file_count": file_count,
+        "chunk_count": len(all_chunks)
+    }
+
 @app.post("/api/chat")
 async def chat(payload: ChatPayload):
     config = load_settings()
@@ -676,26 +824,70 @@ async def chat(payload: ChatPayload):
         
     messages_dict = [{"role": m.role, "content": m.content} for m in payload.messages]
     
-    # Intercept and run Web Search if requested on the last user prompt
-    if payload.web_search_enabled and len(messages_dict) > 0:
+    # RAG search intercept
+    brain_context = ""
+    if payload.local_brain_enabled and len(messages_dict) > 0:
         last_user_message = messages_dict[-1]
         if last_user_message["role"] == "user":
-            # Generate clean keyword query
-            search_query = await generate_search_query(last_user_message["content"], payload.model, config)
-            search_context = await perform_web_search(search_query, config)
-            
-            # Prepend search context to the user's prompt
-            context_prompt = f"""[Web Search Results Context]
+            if os.path.exists(BRAIN_INDEX_FILE):
+                try:
+                    with open(BRAIN_INDEX_FILE, "r") as f:
+                        brain_data = json.load(f)
+                        chunks = brain_data.get("chunks", [])
+                        matched_chunks = search_brain_index(last_user_message["content"], chunks)
+                        if matched_chunks:
+                            formatted_chunks = []
+                            for idx, c in enumerate(matched_chunks, 1):
+                                formatted_chunks.append(f"[{idx}] Source File: {c['source']}\nContent:\n{c['text']}\n")
+                            brain_context = "\n".join(formatted_chunks)
+                        else:
+                            brain_context = "No relevant local documents found."
+                except Exception as e:
+                    logger.error(f"Failed to read brain index: {e}")
+                    brain_context = f"Error reading local brain index: {str(e)}"
+            else:
+                brain_context = "Local Brain has not been indexed yet. Please configure and run indexing in Settings."
+                
+            logger.info("Local Brain context retrieved successfully.")
+
+    # Intercept and run Web Search if requested on the last user prompt
+    if len(messages_dict) > 0:
+        last_user_message = messages_dict[-1]
+        if last_user_message["role"] == "user":
+            if payload.web_search_enabled and payload.local_brain_enabled:
+                # Hybrid RAG + Search
+                search_query = await generate_search_query(last_user_message["content"], payload.model, config)
+                search_context = await perform_web_search(search_query, config)
+                combined_prompt = f"""[Web Search Results Context]
+{search_context}
+
+[Local Brain Context]
+{brain_context}
+
+User Query: {last_user_message["content"]}
+Please construct your answer using both the Web Search Context and the Local Brain Context chunks above. Cite your sources cleanly (citing web URLs for search results, and local file names for local files)."""
+                messages_dict[-1]["content"] = combined_prompt
+                logger.info("Hybrid Search & RAG context successfully injected into LLM payload.")
+            elif payload.web_search_enabled:
+                search_query = await generate_search_query(last_user_message["content"], payload.model, config)
+                search_context = await perform_web_search(search_query, config)
+                context_prompt = f"""[Web Search Results Context]
 {search_context}
 
 User Query: {last_user_message["content"]}
 Please construct your answer using the search context above. Cite source URLs from the search results in your response. Keep citations inline (e.g. [Title](URL))."""
-            
-            # Update the last message content for sending to the LLM
-            messages_dict[-1]["content"] = context_prompt
-            logger.info("Search context successfully injected into LLM payload.")
+                messages_dict[-1]["content"] = context_prompt
+                logger.info("Search context successfully injected into LLM payload.")
+            elif payload.local_brain_enabled:
+                context_prompt = f"""[Local Brain Context]
+{brain_context}
 
-    # Save the updated user message (and search context) to the history
+User Query: {last_user_message["content"]}
+Please construct your answer using the Local Brain Context chunks above. Cite the source files (e.g. [filename](file:///path/to/file)) when referencing facts from the context. Keep your citations clean and informative."""
+                messages_dict[-1]["content"] = context_prompt
+                logger.info("Local Brain context successfully injected into LLM payload.")
+
+    # Save the updated user message (and context) to the history
     db["chats"][payload.chat_id]["messages"] = messages_dict
     save_chats_db(db)
     
