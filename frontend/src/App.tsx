@@ -528,14 +528,50 @@ function App() {
   };
 
   const handleSend = async () => {
-    if (!input.trim() || isGenerating || !activeChatId) return;
+    if (!input.trim() || isGenerating) return;
 
-    const userMessage: Message = { role: 'user', content: input };
-    const updatedMessages = [...(activeChat?.messages || []), userMessage];
+    let targetChatId = activeChatId;
+    let currentInput = input;
+    setInput('');
+    setIsGenerating(true);
+
+    // If no chat is active, auto-create a new chat session first
+    if (!targetChatId) {
+      try {
+        const res = await fetch('http://localhost:8000/api/chats', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: selectedModel
+          }),
+        });
+        if (res.ok) {
+          const newChat = await res.json();
+          setChats(prev => [newChat, ...prev]);
+          setActiveChatId(newChat.id);
+          targetChatId = newChat.id;
+        } else {
+          setIsGenerating(false);
+          setInput(currentInput);
+          return;
+        }
+      } catch (e) {
+        console.error('Failed to auto-create chat session on send:', e);
+        setIsGenerating(false);
+        setInput(currentInput);
+        return;
+      }
+    }
+
+    const userMessage: Message = { role: 'user', content: currentInput };
+    const targetChat = chats.find(c => c.id === targetChatId) || null;
+    const updatedMessages = [...(targetChat?.messages || []), userMessage];
     
     // Optimistically update the UI chat history with user prompt
     setChats(prev => prev.map(c => {
-      if (c.id === activeChatId) {
+      if (c.id === targetChatId) {
         return {
           ...c,
           messages: [...c.messages, userMessage]
@@ -543,12 +579,10 @@ function App() {
       }
       return c;
     }));
-    setInput('');
-    setIsGenerating(true);
 
     // Add placeholder assistant message that we will stream into
     setChats(prev => prev.map(c => {
-      if (c.id === activeChatId) {
+      if (c.id === targetChatId) {
         return {
           ...c,
           messages: [...c.messages, { role: 'assistant', content: '' }]
@@ -564,7 +598,7 @@ function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          chat_id: activeChatId,
+          chat_id: targetChatId,
           messages: updatedMessages,
           model: selectedModel,
           web_search_enabled: webSearchEnabled,
@@ -986,7 +1020,7 @@ function App() {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyPress}
-              disabled={!isKeyConfigured() || isGenerating || !activeChatId}
+              disabled={!isKeyConfigured() || isGenerating}
             />
             <div className="chat-controls">
               <div className="chat-input-hints" style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -999,7 +1033,7 @@ function App() {
                     setWebSearchEnabled(val);
                     localStorage.setItem('webSearchEnabled', String(val));
                   }}
-                  disabled={!isKeyConfigured() || isGenerating || !activeChatId}
+                  disabled={!isKeyConfigured() || isGenerating}
                   style={{
                     background: 'transparent',
                     border: 'none',
@@ -1028,7 +1062,7 @@ function App() {
                     setLocalBrainEnabled(val);
                     localStorage.setItem('localBrainEnabled', String(val));
                   }}
-                  disabled={!isKeyConfigured() || isGenerating || !activeChatId}
+                  disabled={!isKeyConfigured() || isGenerating}
                   style={{
                     background: 'transparent',
                     border: 'none',
@@ -1055,7 +1089,7 @@ function App() {
               <button 
                 className="send-button"
                 onClick={handleSend}
-                disabled={!input.trim() || isGenerating || !isKeyConfigured() || !activeChatId}
+                disabled={!input.trim() || isGenerating || !isKeyConfigured()}
               >
                 <Send size={14} />
               </button>
