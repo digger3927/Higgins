@@ -1312,17 +1312,31 @@ function App() {
                 {projectName ? projectName : 'No Project Active'}
               </h3>
             </div>
-            <button
-              type="button"
-              className="btn-secondary"
-              style={{ padding: '4px 8px', fontSize: '11px' }}
-              onClick={() => {
-                setIsProjectFolderPicker(true);
-                handleOpenFolderPicker(activeProjectPath);
-              }}
-            >
-              Change
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                style={{ padding: '4px 8px', fontSize: '11px' }}
+                onClick={() => {
+                  setIsProjectFolderPicker(true);
+                  handleOpenFolderPicker(activeProjectPath);
+                }}
+              >
+                Change
+              </button>
+              <button
+                type="button"
+                className="close-btn"
+                title="Close Project Panel"
+                onClick={() => {
+                  setIsProjectPanelOpen(false);
+                  localStorage.setItem('isProjectPanelOpen', 'false');
+                }}
+                style={{ fontSize: '20px' }}
+              >
+                &times;
+              </button>
+            </div>
           </div>
           
           <div className="project-panel-content">
