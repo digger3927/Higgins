@@ -741,6 +741,50 @@ def search_brain_index(query: str, chunks: List[Dict[str, Any]]) -> List[Dict[st
     scores.sort(key=lambda x: x[0], reverse=True)
     return [item[1] for item in scores[:5]]
 
+# Directory navigation API for local folder picker UI
+@app.get("/api/browse")
+async def browse_directory(path: Optional[str] = None):
+    if not path or path.strip() == "":
+        path = os.path.expanduser("~")
+        
+    if not os.path.exists(path):
+        path = os.path.expanduser("~")
+        
+    if not os.path.isdir(path):
+        path = os.path.dirname(path)
+        if not path or not os.path.isdir(path):
+            path = os.path.expanduser("~")
+            
+    abs_path = os.path.abspath(path)
+    
+    try:
+        subdirs = []
+        for item in os.listdir(abs_path):
+            if item.startswith("."):
+                continue
+            item_path = os.path.join(abs_path, item)
+            try:
+                if os.path.isdir(item_path):
+                    subdirs.append(item)
+            except (PermissionError, FileNotFoundError):
+                continue
+                
+        subdirs.sort(key=str.lower)
+        
+        parent_path = os.path.dirname(abs_path)
+        if parent_path == abs_path:
+            parent_path = ""
+            
+        return {
+            "current_path": abs_path,
+            "parent_path": parent_path,
+            "subdirectories": subdirs
+        }
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permission denied to access this directory.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # Local Brain API Routes
 @app.get("/api/brain/status")
 async def get_brain_status():

@@ -16,7 +16,10 @@ import {
   ChevronRight,
   Plus,
   Globe,
-  Database
+  Database,
+  Folder,
+  FolderOpen,
+  ArrowUp
 } from 'lucide-react';
 import './App.css';
 
@@ -121,6 +124,13 @@ function App() {
   });
   const [isIndexing, setIsIndexing] = useState(false);
   const [indexingMessage, setIndexingMessage] = useState('');
+  
+  // Folder Picker states
+  const [isFolderPickerOpen, setIsFolderPickerOpen] = useState(false);
+  const [pickerCurrentPath, setPickerCurrentPath] = useState('');
+  const [pickerParentPath, setPickerParentPath] = useState('');
+  const [pickerSubdirs, setPickerSubdirs] = useState<string[]>([]);
+  const [pickerError, setPickerError] = useState('');
 
   // Dynamic OpenRouter catalog state
   const [activeSettingsTab, setActiveSettingsTab] = useState<'keys' | 'catalog' | 'search' | 'brain'>('keys');
@@ -231,6 +241,29 @@ function App() {
       setIndexingMessage(`Error calling index endpoint: ${e}`);
     } finally {
       setIsIndexing(false);
+    }
+  };
+
+  const handleOpenFolderPicker = async (initialPath: string = '') => {
+    setIsFolderPickerOpen(true);
+    setPickerError('');
+    await fetchPickerDirectory(initialPath);
+  };
+
+  const fetchPickerDirectory = async (path: string) => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/browse?path=${encodeURIComponent(path)}`);
+      const data = await res.json();
+      if (res.ok) {
+        setPickerCurrentPath(data.current_path);
+        setPickerParentPath(data.parent_path);
+        setPickerSubdirs(data.subdirectories);
+        setPickerError('');
+      } else {
+        setPickerError(data.detail || 'Failed to list directory');
+      }
+    } catch (e) {
+      setPickerError(`Failed to fetch directory: ${e}`);
     }
   };
 
@@ -1169,13 +1202,25 @@ function App() {
                 <div style={{ flex: 1 }}>
                   <div className="form-group">
                     <label className="form-label">Local Brain Folder Path</label>
-                    <input
-                      type="text"
-                      className="form-input"
-                      placeholder="/absolute/path/to/your/documents/folder"
-                      value={brainDirectoryInput}
-                      onChange={e => setBrainDirectoryInput(e.target.value)}
-                    />
+                    <div className="form-input-wrapper" style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="/absolute/path/to/your/documents/folder"
+                        value={brainDirectoryInput}
+                        onChange={e => setBrainDirectoryInput(e.target.value)}
+                        style={{ flex: 1 }}
+                      />
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => handleOpenFolderPicker(brainDirectoryInput)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0 16px', fontSize: '13px', whiteSpace: 'nowrap' }}
+                      >
+                        <Folder size={14} />
+                        Browse
+                      </button>
+                    </div>
                     <span className="form-hint">
                       Higgins will index and scan all text files, markdown files, and PDF documents in this directory recursively.
                     </span>
@@ -1317,6 +1362,120 @@ function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      
+      {/* Folder Picker Modal */}
+      {isFolderPickerOpen && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="modal-content glass-panel" style={{ maxWidth: '600px', display: 'flex', flexDirection: 'column', height: '80vh' }}>
+            <div className="modal-header">
+               <h3 className="modal-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                 <FolderOpen size={18} color="var(--accent-purple)" />
+                 Select Local Brain Directory
+               </h3>
+              <button 
+                className="close-btn"
+                onClick={() => setIsFolderPickerOpen(false)}
+              >
+                &times;
+              </button>
+            </div>
+            
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0, padding: '16px 0' }}>
+              {/* Current Path Bar */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 16px 12px 16px', borderBottom: '1px solid var(--border-glass)' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => fetchPickerDirectory(pickerParentPath)}
+                  disabled={!pickerParentPath}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '6px 8px' }}
+                  title="Go up to parent directory"
+                >
+                  <ArrowUp size={14} />
+                </button>
+                <input
+                  type="text"
+                  className="form-input"
+                  readOnly
+                  value={pickerCurrentPath}
+                  style={{ flex: 1, cursor: 'default', background: 'rgba(255,255,255,0.02)' }}
+                />
+              </div>
+              
+              {/* Error alert */}
+              {pickerError && (
+                <div style={{ margin: '12px 16px', color: 'var(--accent-red)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Info size={14} />
+                  <span>{pickerError}</span>
+                </div>
+              )}
+              
+              {/* Folder List */}
+              <div 
+                className="catalog-list-container" 
+                style={{ 
+                  flex: 1, 
+                  overflowY: 'auto', 
+                  padding: '12px 16px', 
+                  display: 'flex', 
+                  flexDirection: 'column', 
+                  gap: '4px' 
+                }}
+              >
+                {pickerSubdirs.length === 0 ? (
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '40px 0', fontSize: '13px' }}>
+                    No subdirectories found
+                  </div>
+                ) : (
+                  pickerSubdirs.map((dir) => (
+                    <div
+                      key={dir}
+                      className="catalog-item-row"
+                      style={{ padding: '8px 12px', borderRadius: 'var(--radius-sm)' }}
+                      onDoubleClick={() => fetchPickerDirectory(pickerCurrentPath + '/' + dir)}
+                      onClick={() => {}}
+                    >
+                      <div className="catalog-item-left" style={{ cursor: 'pointer' }} onDoubleClick={() => fetchPickerDirectory(pickerCurrentPath + '/' + dir)}>
+                        <Folder size={16} color="var(--accent-purple)" style={{ marginRight: '8px' }} />
+                        <span className="catalog-model-name" style={{ fontSize: '13px' }}>{dir}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="chat-action-btn"
+                        onClick={() => fetchPickerDirectory(pickerCurrentPath + '/' + dir)}
+                        style={{ fontSize: '11px', color: 'var(--text-muted)' }}
+                      >
+                        Open
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+            
+            <div className="modal-actions" style={{ borderTop: '1px solid var(--border-glass)', paddingTop: '12px' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setIsFolderPickerOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-primary"
+                style={{ background: 'var(--accent-purple)', borderColor: 'var(--accent-purple)' }}
+                onClick={() => {
+                  setBrainDirectoryInput(pickerCurrentPath);
+                  setIsFolderPickerOpen(false);
+                }}
+              >
+                Select Current Folder
+              </button>
+            </div>
           </div>
         </div>
       )}
