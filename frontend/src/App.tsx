@@ -21,7 +21,23 @@ import {
   FolderOpen,
   ArrowUp
 } from 'lucide-react';
+import { marked } from 'marked';
 import './App.css';
+
+// Configure marked options
+marked.setOptions({
+  breaks: true,
+  gfm: true
+});
+
+const renderMarkdown = (content: string) => {
+  try {
+    const rawHtml = marked.parse(content, { async: false }) as string;
+    return { __html: rawHtml };
+  } catch (err) {
+    return { __html: content };
+  }
+};
 
 interface Message {
   role: 'user' | 'assistant';
@@ -937,9 +953,16 @@ function App() {
                     )}
                     <span>{msg.role === 'user' ? 'You' : 'Higgins'}</span>
                   </div>
-                  <div style={{ whiteSpace: 'pre-wrap' }}>
-                    {msg.content}
-                  </div>
+                  {msg.role === 'user' ? (
+                    <div style={{ whiteSpace: 'pre-wrap' }}>
+                      {msg.content}
+                    </div>
+                  ) : (
+                    <div 
+                      className="markdown-content"
+                      dangerouslySetInnerHTML={renderMarkdown(msg.content)}
+                    />
+                  )}
                   
                   {msg.sources && msg.sources.length > 0 && (
                     <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid var(--border-glass)' }}>

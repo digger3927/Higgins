@@ -927,4 +927,60 @@
   animation: pulseGlowPurple 2s infinite ease-in-out;
 }
 
+/* Markdown Content Styles */
+.markdown-content p {
+  margin: 0 0 12px 0;
+  line-height: 1.6;
+}
 
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+
+.markdown-content h1,
+.markdown-content h2,
+.markdown-content h3,
+.markdown-content h4 {
+  margin: 16px 0 8px 0;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.markdown-content h1:first-child,
+.markdown-content h2:first-child,
+.markdown-content h3:first-child,
+.markdown-content h4:first-child {
+  margin-top: 0;
+}
+
+.markdown-content ul,
+.markdown-content ol {
+  margin: 8px 0 12px 0;
+  padding-left: 20px;
+}
+
+.markdown-content li {
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+
+.markdown-content strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.markdown-content blockquote {
+  border-left: 3px solid var(--accent-purple);
+  margin: 12px 0;
+  padding: 4px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text-secondary);
+}
+
+.markdown-content hr {
+  border: 0;
+  height: 1px;
+  background: var(--border-glass);
+  margin: 16px 0;
+}
