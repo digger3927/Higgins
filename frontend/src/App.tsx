@@ -19,7 +19,8 @@ import {
   Database,
   Folder,
   FolderOpen,
-  ArrowUp
+  ArrowUp,
+  Brain
 } from 'lucide-react';
 import { marked } from 'marked';
 import './App.css';
@@ -154,7 +155,18 @@ function App() {
   const [pickerError, setPickerError] = useState('');
 
   // Dynamic OpenRouter catalog state
-  const [activeSettingsTab, setActiveSettingsTab] = useState<'keys' | 'catalog' | 'search' | 'brain'>('keys');
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'keys' | 'catalog' | 'search' | 'brain' | 'memory'>('keys');
+  
+  // Memory management states
+  interface MemoryItem {
+    id: string;
+    fact: string;
+    created_at: number;
+  }
+  const [memories, setMemories] = useState<MemoryItem[]>([]);
+  const [newMemoryInput, setNewMemoryInput] = useState('');
+  const [isAddingMemory, setIsAddingMemory] = useState(false);
+
   const [openRouterCatalog, setOpenRouterCatalog] = useState<{ id: string; name: string; context_length: number; prompt_price: string; completion_price: string }[]>([]);
   const [catalogSearchQuery, setCatalogSearchQuery] = useState('');
   const [isCatalogLoading, setIsCatalogLoading] = useState(false);
@@ -309,6 +321,60 @@ function App() {
       fetchCatalog();
     }
   }, [isSettingsOpen, activeSettingsTab, openRouterCatalog.length]);
+
+  const fetchMemories = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/memory');
+      if (res.ok) {
+        const data = await res.json();
+        setMemories(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch memories:', e);
+    }
+  };
+
+  const handleAddMemory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newMemoryInput.trim()) return;
+    setIsAddingMemory(true);
+    try {
+      const res = await fetch('http://localhost:8000/api/memory', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ fact: newMemoryInput.trim() })
+      });
+      if (res.ok) {
+        setNewMemoryInput('');
+        await fetchMemories();
+      }
+    } catch (e) {
+      console.error('Failed to add memory:', e);
+    } finally {
+      setIsAddingMemory(false);
+    }
+  };
+
+  const handleDeleteMemory = async (id: string) => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/memory/${id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        await fetchMemories();
+      }
+    } catch (e) {
+      console.error('Failed to delete memory:', e);
+    }
+  };
+
+  useEffect(() => {
+    if (isSettingsOpen && activeSettingsTab === 'memory') {
+      fetchMemories();
+    }
+  }, [isSettingsOpen, activeSettingsTab]);
 
   const fetchModels = async () => {
     try {
@@ -1164,6 +1230,13 @@ function App() {
               >
                 Local Brain
               </button>
+              <button 
+                type="button"
+                className={`modal-tab-btn ${activeSettingsTab === 'memory' ? 'active' : ''}`}
+                onClick={() => setActiveSettingsTab('memory')}
+              >
+                Memory & Prefs
+              </button>
             </div>
 
             <form onSubmit={handleSaveSettings} style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
@@ -1385,7 +1458,7 @@ function App() {
                     </div>
                   </div>
                 </div>
-              ) : (
+              ) : activeSettingsTab === 'catalog' ? (
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                   <div className="catalog-search-wrapper">
                     <input
@@ -1457,6 +1530,55 @@ function App() {
                       )}
                     </div>
                   )}
+                </div>
+              ) : (
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                  <div className="catalog-search-wrapper" style={{ marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="Add a custom fact or preference..."
+                        value={newMemoryInput}
+                        onChange={e => setNewMemoryInput(e.target.value)}
+                        style={{ flex: 1 }}
+                      />
+                      <button
+                        type="button"
+                        className="btn-primary"
+                        onClick={handleAddMemory}
+                        disabled={isAddingMemory || !newMemoryInput.trim()}
+                        style={{ background: 'var(--accent-purple)', borderColor: 'var(--accent-purple)', padding: '0 16px', fontSize: '13px', whiteSpace: 'nowrap' }}
+                      >
+                        {isAddingMemory ? 'Adding...' : 'Add Fact'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="catalog-list-container" style={{ flex: 1, overflowY: 'auto' }}>
+                    {memories.length === 0 ? (
+                      <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                        No saved memories or preferences found. Tell Higgins things to remember in chat or add them manually above!
+                      </div>
+                    ) : (
+                      memories.map(mem => (
+                        <div key={mem.id} className="catalog-item-row" style={{ padding: '10px 12px' }}>
+                          <div className="catalog-item-left" style={{ cursor: 'default' }}>
+                            <Brain size={16} color="var(--accent-purple)" style={{ marginRight: '10px', flexShrink: 0 }} />
+                            <span className="catalog-model-name" style={{ fontSize: '13px', color: 'var(--text-primary)' }}>{mem.fact}</span>
+                          </div>
+                          <button
+                            type="button"
+                            className="chat-action-btn"
+                            onClick={() => handleDeleteMemory(mem.id)}
+                            style={{ color: 'var(--accent-red)', opacity: 0.8 }}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               )}
 

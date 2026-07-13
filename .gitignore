@@ -2,6 +2,7 @@
 config.json
 chats.json
 brain.json
+memory.json
 .env
 *.env
 

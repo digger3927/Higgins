@@ -5,7 +5,7 @@ import asyncio
 import time
 import re
 from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -34,6 +34,7 @@ app.add_middleware(
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
 CHATS_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "chats.json")
 BRAIN_INDEX_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brain.json")
+MEMORY_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "memory.json")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 class Settings(BaseModel):
@@ -123,6 +124,24 @@ def save_chats_db(db: Dict[str, Any]):
     except Exception as e:
         logger.error(f"Error saving chats file: {e}")
         raise HTTPException(status_code=500, detail="Failed to save chats database")
+
+def load_memory_db() -> Dict[str, Any]:
+    if not os.path.exists(MEMORY_FILE):
+        return {"memories": []}
+    try:
+        with open(MEMORY_FILE, "r") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading memory database: {e}")
+        return {"memories": []}
+
+def save_memory_db(db: Dict[str, Any]):
+    try:
+        with open(MEMORY_FILE, "w") as f:
+            json.dump(db, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving memory database: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save memory database")
 
 @app.get("/api/settings")
 async def get_settings():
@@ -308,6 +327,50 @@ async def get_models():
         
     return gemini_models + openrouter_models + ollama_models
 
+# Memory & Preferences endpoints
+class MemoryCreate(BaseModel):
+    fact: str
+
+@app.get("/api/memory")
+async def get_memories():
+    db = load_memory_db()
+    return db.get("memories", [])
+
+@app.post("/api/memory")
+async def add_memory(payload: MemoryCreate):
+    fact = payload.fact.strip()
+    if not fact:
+        raise HTTPException(status_code=400, detail="Memory fact cannot be empty")
+        
+    db = load_memory_db()
+    memories = db.get("memories", [])
+    
+    if any(m["fact"].lower() == fact.lower() for m in memories):
+        return {"status": "success", "message": "Memory already exists"}
+        
+    new_memory = {
+        "id": str(int(time.time() * 1000)),
+        "fact": fact,
+        "created_at": time.time()
+    }
+    memories.append(new_memory)
+    db["memories"] = memories
+    save_memory_db(db)
+    return new_memory
+
+@app.delete("/api/memory/{memory_id}")
+async def delete_memory(memory_id: str):
+    db = load_memory_db()
+    memories = db.get("memories", [])
+    updated = [m for m in memories if m["id"] != memory_id]
+    
+    if len(updated) == len(memories):
+        raise HTTPException(status_code=404, detail="Memory not found")
+        
+    db["memories"] = updated
+    save_memory_db(db)
+    return {"status": "success", "message": "Memory deleted"}
+
 # Search Engine Crawlers & APIs
 async def search_duckduckgo(query: str) -> List[Dict[str, str]]:
     results = []
@@ -451,7 +514,7 @@ async def perform_web_search(query: str, config: Dict[str, Any]) -> Tuple[str, L
     return "\n".join(formatted), results
 
 # LLM streaming helper generators
-async def stream_gemini(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None):
+async def stream_gemini(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None, background_tasks: Optional[BackgroundTasks] = None, user_prompt: str = ""):
     accumulated_content = ""
     try:
         genai.configure(api_key=api_key)
@@ -476,13 +539,15 @@ async def stream_gemini(api_key: str, model_name: str, messages: List[Dict[str, 
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk.text})}\n\n"
         
         save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
+        if background_tasks and user_prompt:
+            background_tasks.add_task(extract_memories_task, user_prompt, accumulated_content)
         yield "data: [DONE]\n\n"
         
     except Exception as e:
         logger.error(f"Gemini streaming error: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
-async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None):
+async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None, background_tasks: Optional[BackgroundTasks] = None, user_prompt: str = ""):
     accumulated_content = ""
     try:
         async with httpx.AsyncClient() as client:
@@ -515,6 +580,8 @@ async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[s
                         data_str = line[6:]
                         if data_str == "[DONE]":
                             save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
+                            if background_tasks and user_prompt:
+                                background_tasks.add_task(extract_memories_task, user_prompt, accumulated_content)
                             yield "data: [DONE]\n\n"
                             break
                         try:
@@ -532,7 +599,7 @@ async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[s
         logger.error(f"OpenRouter streaming error: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
-async def stream_ollama(model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None):
+async def stream_ollama(model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None, background_tasks: Optional[BackgroundTasks] = None, user_prompt: str = ""):
     accumulated_content = ""
     try:
         ollama_messages = []
@@ -571,6 +638,8 @@ async def stream_ollama(model_name: str, messages: List[Dict[str, str]], chat_id
                         
                         if data_json.get("done", False):
                             save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
+                            if background_tasks and user_prompt:
+                                background_tasks.add_task(extract_memories_task, user_prompt, accumulated_content)
                             yield "data: [DONE]\n\n"
                             break
                     except json.JSONDecodeError:
@@ -861,8 +930,126 @@ async def index_brain():
         "chunk_count": len(all_chunks)
     }
 
+async def extract_memories_task(user_input: str, assistant_response: str):
+    try:
+        config = load_settings()
+        model_name = config.get("preferred_model", "google/gemini-2.5-flash")
+        
+        mem_db = load_memory_db()
+        existing_list = [m["fact"] for m in mem_db.get("memories", [])]
+        existing_str = "\n".join(f"- {fact}" for fact in existing_list) if existing_list else "No existing memories."
+        
+        extraction_prompt = f"""You are the long-term memory manager for Higgins, an AI assistant.
+Analyze the following conversation snippet.
+If the user shares any personal preferences, name, age, hobbies, likes/dislikes, or explicitly asks Higgins to remember something (e.g. "remember, I don't like tuna" or "I prefer writing code in Python"), extract them as concise, standalone declarative facts in the third person (e.g., 'User does not like tuna', 'User prefers Python for coding').
+
+Existing Memories:
+{existing_str}
+
+Conversation Snippet:
+User: {user_input}
+Higgins: {assistant_response}
+
+Instructions:
+1. Extract ONLY facts that are NOT already in the existing memories list above.
+2. Output each extracted fact as a standalone bullet point starting with a hyphen (e.g., '- User prefers Python').
+3. If no new facts or preferences were shared, output exactly the word 'NONE'.
+4. Do not output any intro, explanations, or formatting other than the bullet list or 'NONE'."""
+
+        logger.info(f"Triggering background memory extraction using model: {model_name}")
+        
+        output_text = ""
+        is_gemini = "gemini" in model_name.lower()
+        local_models = []
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.get(f"{OLLAMA_HOST}/api/tags", timeout=2.0)
+                if res.status_code == 200:
+                    local_models = [m["name"] for m in res.json().get("models", [])]
+        except Exception:
+            pass
+            
+        is_local = model_name in local_models
+        
+        if is_gemini:
+            api_key = config.get("gemini_api_key")
+            if api_key:
+                genai.configure(api_key=api_key)
+                clean_model = model_name.replace("google/", "") if model_name.startswith("google/") else model_name
+                model = genai.GenerativeModel(clean_model)
+                response = await model.generate_content_async(extraction_prompt)
+                output_text = response.text if response.text else ""
+            else:
+                logger.warning("Gemini API key not set, skipping memory extraction task.")
+                return
+        elif not is_local:
+            api_key = config.get("openrouter_api_key")
+            if api_key:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers={
+                            "Authorization": f"Bearer {api_key}",
+                            "Content-Type": "application/json"
+                        },
+                        json={
+                            "model": model_name,
+                            "messages": [{"role": "user", "content": extraction_prompt}]
+                        },
+                        timeout=30.0
+                    )
+                    if response.status_code == 200:
+                        output_text = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+                    else:
+                        logger.error(f"OpenRouter memory extraction failed: {response.status_code} - {response.text}")
+                        return
+            else:
+                logger.warning("OpenRouter API key not set, skipping memory extraction task.")
+                return
+        else:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{OLLAMA_HOST}/api/chat",
+                    json={
+                        "model": model_name,
+                        "messages": [{"role": "user", "content": extraction_prompt}],
+                        "stream": False
+                    },
+                    timeout=60.0
+                )
+                if response.status_code == 200:
+                    output_text = response.json().get("message", {}).get("content", "")
+                else:
+                    logger.error(f"Ollama memory extraction failed: {response.status_code} - {response.text}")
+                    return
+                    
+        if not output_text or "NONE" in output_text.upper():
+            logger.info("No new memories extracted from conversation snippet.")
+            return
+            
+        lines = output_text.strip().split("\n")
+        new_memories = []
+        for line in lines:
+            line_clean = re.sub(r'^[\-\*\s•]+', '', line).strip()
+            if line_clean and len(line_clean) > 3 and line_clean.upper() != "NONE":
+                if not any(m["fact"].lower() == line_clean.lower() for m in mem_db.get("memories", [])):
+                    new_memories.append({
+                        "id": str(int(time.time() * 1000) + len(new_memories)),
+                        "fact": line_clean,
+                        "created_at": time.time()
+                    })
+                    logger.info(f"New memory extracted: {line_clean}")
+                    
+        if new_memories:
+            mem_db["memories"] = mem_db.get("memories", []) + new_memories
+            save_memory_db(mem_db)
+            logger.info(f"Successfully saved {len(new_memories)} new memories.")
+            
+    except Exception as e:
+        logger.error(f"Error in extract_memories_task background job: {e}")
+
 @app.post("/api/chat")
-async def chat(payload: ChatPayload):
+async def chat(payload: ChatPayload, background_tasks: BackgroundTasks):
     config = load_settings()
     db = load_chats_db()
     
@@ -870,6 +1057,10 @@ async def chat(payload: ChatPayload):
         raise HTTPException(status_code=404, detail="Chat session not found")
         
     messages_dict = [{"role": m.role, "content": m.content} for m in payload.messages]
+    
+    clean_user_prompt = ""
+    if len(messages_dict) > 0 and messages_dict[-1]["role"] == "user":
+        clean_user_prompt = messages_dict[-1]["content"]
     
     # RAG search intercept
     brain_context = ""
@@ -907,6 +1098,20 @@ async def chat(payload: ChatPayload):
     sources_metadata = []
     sources_metadata.extend(brain_results)
     
+    mem_db = load_memory_db()
+    memories = mem_db.get("memories", [])
+    memory_context = ""
+    if memories:
+        formatted_mems = [f"- {m['fact']}" for m in memories]
+        memory_context = "\n".join(formatted_mems)
+        
+    memory_block = ""
+    if memory_context:
+        memory_block = f"""[User Profile & Long-Term Memory]
+{memory_context}
+
+"""
+    
     if len(messages_dict) > 0:
         last_user_message = messages_dict[-1]
         if last_user_message["role"] == "user":
@@ -915,7 +1120,7 @@ async def chat(payload: ChatPayload):
                 search_query = await generate_search_query(last_user_message["content"], payload.model, config)
                 search_context, web_results = await perform_web_search(search_query, config)
                 sources_metadata.extend(web_results)
-                combined_prompt = f"""[Web Search Results Context]
+                combined_prompt = f"""{memory_block}[Web Search Results Context]
 {search_context}
 
 [Local Brain Context]
@@ -929,7 +1134,7 @@ Please construct your answer using both the Web Search Context and the Local Bra
                 search_query = await generate_search_query(last_user_message["content"], payload.model, config)
                 search_context, web_results = await perform_web_search(search_query, config)
                 sources_metadata.extend(web_results)
-                context_prompt = f"""[Web Search Results Context]
+                context_prompt = f"""{memory_block}[Web Search Results Context]
 {search_context}
 
 User Query: {last_user_message["content"]}
@@ -937,13 +1142,18 @@ Please construct your answer using the search context above. DO NOT include a li
                 messages_dict[-1]["content"] = context_prompt
                 logger.info("Search context successfully injected into LLM payload.")
             elif payload.local_brain_enabled:
-                context_prompt = f"""[Local Brain Context]
+                context_prompt = f"""{memory_block}[Local Brain Context]
 {brain_context}
 
 User Query: {last_user_message["content"]}
 Please construct your answer using the Local Brain Context chunks above. DO NOT include raw source lists or reference indices (like [1], [2]) in your final response. The interface displays sources separately. Write your reply cleanly."""
                 messages_dict[-1]["content"] = context_prompt
                 logger.info("Local Brain context successfully injected into LLM payload.")
+            elif memory_block:
+                context_prompt = f"""{memory_block}User Query: {last_user_message["content"]}
+Please answer the user query, taking into account any relevant facts, details, or preferences from the User Profile & Long-Term Memory context block above."""
+                messages_dict[-1]["content"] = context_prompt
+                logger.info("Long-Term Memory context successfully injected into LLM payload.")
 
     # Save the updated user message (and context) to the history
     db["chats"][payload.chat_id]["messages"] = messages_dict
@@ -968,7 +1178,7 @@ Please construct your answer using the Local Brain Context chunks above. DO NOT 
         if not api_key:
             raise HTTPException(status_code=400, detail="Gemini API Key not set. Update settings first.")
         return StreamingResponse(
-            stream_gemini(api_key, model_name, messages_dict, payload.chat_id, sources=sources_metadata),
+            stream_gemini(api_key, model_name, messages_dict, payload.chat_id, sources=sources_metadata, background_tasks=background_tasks, user_prompt=clean_user_prompt),
             media_type="text/event-stream"
         )
     elif not is_local:
@@ -976,12 +1186,12 @@ Please construct your answer using the Local Brain Context chunks above. DO NOT 
         if not api_key:
             raise HTTPException(status_code=400, detail="OpenRouter API Key not set. Update settings first.")
         return StreamingResponse(
-            stream_openrouter(api_key, model_name, messages_dict, payload.chat_id, sources=sources_metadata),
+            stream_openrouter(api_key, model_name, messages_dict, payload.chat_id, sources=sources_metadata, background_tasks=background_tasks, user_prompt=clean_user_prompt),
             media_type="text/event-stream"
         )
     else:
         return StreamingResponse(
-            stream_ollama(model_name, messages_dict, payload.chat_id, sources=sources_metadata),
+            stream_ollama(model_name, messages_dict, payload.chat_id, sources=sources_metadata, background_tasks=background_tasks, user_prompt=clean_user_prompt),
             media_type="text/event-stream"
         )
 
