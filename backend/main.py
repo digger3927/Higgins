@@ -416,7 +416,7 @@ async def search_serper(query: str, api_key: str) -> List[Dict[str, str]]:
         logger.error(f"Serper API error: {e}")
     return results
 
-async def perform_web_search(query: str, config: Dict[str, Any]) -> str:
+async def perform_web_search(query: str, config: Dict[str, Any]) -> Tuple[str, List[Dict[str, str]]]:
     provider = config.get("search_provider", "duckduckgo")
     logger.info(f"Triggering web search query: '{query}' via provider: {provider}")
     
@@ -443,15 +443,15 @@ async def perform_web_search(query: str, config: Dict[str, Any]) -> str:
             
     if not results:
         logger.warning(f"No search results fetched for query '{query}' from provider {provider}")
-        return "No search results found or provider connection failed."
+        return "No search results found or provider connection failed.", []
         
     formatted = []
     for idx, r in enumerate(results, 1):
         formatted.append(f"[{idx}] Title: {r.get('title')}\nSource: {r.get('url')}\nSnippet: {r.get('snippet')}\n")
-    return "\n".join(formatted)
+    return "\n".join(formatted), results
 
 # LLM streaming helper generators
-async def stream_gemini(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str):
+async def stream_gemini(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None):
     accumulated_content = ""
     try:
         genai.configure(api_key=api_key)
@@ -475,14 +475,14 @@ async def stream_gemini(api_key: str, model_name: str, messages: List[Dict[str, 
                 accumulated_content += chunk.text
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk.text})}\n\n"
         
-        save_chat_messages(chat_id, messages, accumulated_content)
+        save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
         yield "data: [DONE]\n\n"
         
     except Exception as e:
         logger.error(f"Gemini streaming error: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
-async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str):
+async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None):
     accumulated_content = ""
     try:
         async with httpx.AsyncClient() as client:
@@ -514,7 +514,7 @@ async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[s
                     if line.startswith("data: "):
                         data_str = line[6:]
                         if data_str == "[DONE]":
-                            save_chat_messages(chat_id, messages, accumulated_content)
+                            save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
                             yield "data: [DONE]\n\n"
                             break
                         try:
@@ -532,7 +532,7 @@ async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[s
         logger.error(f"OpenRouter streaming error: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
-async def stream_ollama(model_name: str, messages: List[Dict[str, str]], chat_id: str):
+async def stream_ollama(model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None):
     accumulated_content = ""
     try:
         ollama_messages = []
@@ -570,7 +570,7 @@ async def stream_ollama(model_name: str, messages: List[Dict[str, str]], chat_id
                             yield f"data: {json.dumps({'type': 'chunk', 'content': chunk_text})}\n\n"
                         
                         if data_json.get("done", False):
-                            save_chat_messages(chat_id, messages, accumulated_content)
+                            save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
                             yield "data: [DONE]\n\n"
                             break
                     except json.JSONDecodeError:
@@ -579,13 +579,16 @@ async def stream_ollama(model_name: str, messages: List[Dict[str, str]], chat_id
         logger.error(f"Ollama streaming error: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': f'Failed to connect to local Ollama. Details: {str(e)}'})}\n\n"
 
-def save_chat_messages(chat_id: str, client_messages: List[Dict[str, str]], assistant_content: str):
+def save_chat_messages(chat_id: str, client_messages: List[Dict[str, str]], assistant_content: str, sources: Optional[List[Dict[str, Any]]] = None):
     try:
         db = load_chats_db()
         if chat_id in db["chats"]:
             chat = db["chats"][chat_id]
             updated_messages = list(client_messages)
-            updated_messages.append({"role": "assistant", "content": assistant_content})
+            assistant_msg = {"role": "assistant", "content": assistant_content}
+            if sources:
+                assistant_msg["sources"] = sources
+            updated_messages.append(assistant_msg)
             chat["messages"] = updated_messages
             
             if chat.get("title") == "New Chat" and len(client_messages) > 0:
@@ -870,6 +873,7 @@ async def chat(payload: ChatPayload):
     
     # RAG search intercept
     brain_context = ""
+    brain_results = []
     if payload.local_brain_enabled and len(messages_dict) > 0:
         last_user_message = messages_dict[-1]
         if last_user_message["role"] == "user":
@@ -883,6 +887,11 @@ async def chat(payload: ChatPayload):
                             formatted_chunks = []
                             for idx, c in enumerate(matched_chunks, 1):
                                 formatted_chunks.append(f"[{idx}] Source File: {c['source']}\nContent:\n{c['text']}\n")
+                                brain_results.append({
+                                    "title": c['source'],
+                                    "url": f"file://{c['full_path']}",
+                                    "snippet": c['text']
+                                })
                             brain_context = "\n".join(formatted_chunks)
                         else:
                             brain_context = "No relevant local documents found."
@@ -895,13 +904,17 @@ async def chat(payload: ChatPayload):
             logger.info("Local Brain context retrieved successfully.")
 
     # Intercept and run Web Search if requested on the last user prompt
+    sources_metadata = []
+    sources_metadata.extend(brain_results)
+    
     if len(messages_dict) > 0:
         last_user_message = messages_dict[-1]
         if last_user_message["role"] == "user":
             if payload.web_search_enabled and payload.local_brain_enabled:
                 # Hybrid RAG + Search
                 search_query = await generate_search_query(last_user_message["content"], payload.model, config)
-                search_context = await perform_web_search(search_query, config)
+                search_context, web_results = await perform_web_search(search_query, config)
+                sources_metadata.extend(web_results)
                 combined_prompt = f"""[Web Search Results Context]
 {search_context}
 
@@ -909,17 +922,18 @@ async def chat(payload: ChatPayload):
 {brain_context}
 
 User Query: {last_user_message["content"]}
-Please construct your answer using both the Web Search Context and the Local Brain Context chunks above. Cite your sources cleanly (citing web URLs for search results, and local file names for local files)."""
+Please construct your answer using both the Web Search Context and the Local Brain Context chunks above. DO NOT include a list of source links or reference indices (like [1], [2], etc.) in your final response. The user interface displays sources separately. Write your reply cleanly."""
                 messages_dict[-1]["content"] = combined_prompt
                 logger.info("Hybrid Search & RAG context successfully injected into LLM payload.")
             elif payload.web_search_enabled:
                 search_query = await generate_search_query(last_user_message["content"], payload.model, config)
-                search_context = await perform_web_search(search_query, config)
+                search_context, web_results = await perform_web_search(search_query, config)
+                sources_metadata.extend(web_results)
                 context_prompt = f"""[Web Search Results Context]
 {search_context}
 
 User Query: {last_user_message["content"]}
-Please construct your answer using the search context above. Cite source URLs from the search results in your response. Keep citations inline (e.g. [Title](URL))."""
+Please construct your answer using the search context above. DO NOT include a list of source links, URLs, or reference indices (like [1], [2]) at the end of your response. The interface displays sources separately. Write your reply cleanly."""
                 messages_dict[-1]["content"] = context_prompt
                 logger.info("Search context successfully injected into LLM payload.")
             elif payload.local_brain_enabled:
@@ -927,7 +941,7 @@ Please construct your answer using the search context above. Cite source URLs fr
 {brain_context}
 
 User Query: {last_user_message["content"]}
-Please construct your answer using the Local Brain Context chunks above. Cite the source files (e.g. [filename](file:///path/to/file)) when referencing facts from the context. Keep your citations clean and informative."""
+Please construct your answer using the Local Brain Context chunks above. DO NOT include raw source lists or reference indices (like [1], [2]) in your final response. The interface displays sources separately. Write your reply cleanly."""
                 messages_dict[-1]["content"] = context_prompt
                 logger.info("Local Brain context successfully injected into LLM payload.")
 
@@ -954,7 +968,7 @@ Please construct your answer using the Local Brain Context chunks above. Cite th
         if not api_key:
             raise HTTPException(status_code=400, detail="Gemini API Key not set. Update settings first.")
         return StreamingResponse(
-            stream_gemini(api_key, model_name, messages_dict, payload.chat_id),
+            stream_gemini(api_key, model_name, messages_dict, payload.chat_id, sources=sources_metadata),
             media_type="text/event-stream"
         )
     elif not is_local:
@@ -962,12 +976,12 @@ Please construct your answer using the Local Brain Context chunks above. Cite th
         if not api_key:
             raise HTTPException(status_code=400, detail="OpenRouter API Key not set. Update settings first.")
         return StreamingResponse(
-            stream_openrouter(api_key, model_name, messages_dict, payload.chat_id),
+            stream_openrouter(api_key, model_name, messages_dict, payload.chat_id, sources=sources_metadata),
             media_type="text/event-stream"
         )
     else:
         return StreamingResponse(
-            stream_ollama(model_name, messages_dict, payload.chat_id),
+            stream_ollama(model_name, messages_dict, payload.chat_id, sources=sources_metadata),
             media_type="text/event-stream"
         )
 

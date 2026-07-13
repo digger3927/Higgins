@@ -26,6 +26,7 @@ import './App.css';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+  sources?: { title: string; url: string; snippet?: string }[];
 }
 
 interface ChatSession {
@@ -84,6 +85,7 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [localBrainEnabled, setLocalBrainEnabled] = useState(false);
+  const [expandedSources, setExpandedSources] = useState<Record<number, boolean>>({});
   
   // Settings States
   const [settings, setSettings] = useState<SettingsConfig>({
@@ -683,6 +685,7 @@ function App() {
         onClick={() => {
           if (!isRenaming) {
             setActiveChatId(chat.id);
+            setExpandedSources({});
           }
         }}
         onDoubleClick={(e) => startRename(chat.id, chat.title, e)}
@@ -900,6 +903,49 @@ function App() {
                   <div style={{ whiteSpace: 'pre-wrap' }}>
                     {msg.content}
                   </div>
+                  
+                  {msg.sources && msg.sources.length > 0 && (
+                    <div style={{ marginTop: '12px', paddingTop: '8px', borderTop: '1px solid var(--border-glass)' }}>
+                      <button
+                        type="button"
+                        className="btn-secondary"
+                        onClick={() => {
+                          setExpandedSources(prev => ({
+                            ...prev,
+                            [idx]: !prev[idx]
+                          }));
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 8px', fontSize: '11px', background: 'rgba(255,255,255,0.02)' }}
+                      >
+                        <Info size={10} />
+                        <span>{expandedSources[idx] ? 'Hide Sources' : `Show Sources (${msg.sources.length})`}</span>
+                      </button>
+                      
+                      {expandedSources[idx] && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px', padding: '8px', borderRadius: 'var(--radius-sm)', background: 'rgba(255,255,255,0.01)', border: '1px solid var(--border-glass)' }}>
+                          {msg.sources.map((src, srcIdx) => (
+                            <div key={srcIdx} style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '12px' }}>
+                              <a 
+                                href={src.url} 
+                                target="_blank" 
+                                rel="noopener noreferrer" 
+                                style={{ color: 'var(--accent-blue)', fontWeight: 500, textDecoration: 'none' }}
+                                onMouseEnter={(e) => e.currentTarget.style.textDecoration = 'underline'}
+                                onMouseLeave={(e) => e.currentTarget.style.textDecoration = 'none'}
+                              >
+                                {src.title || src.url}
+                              </a>
+                              {src.snippet && (
+                                <span style={{ color: 'var(--text-secondary)', fontSize: '11px', opacity: 0.8, lineBreak: 'anywhere' }}>
+                                  {src.snippet}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             ))
