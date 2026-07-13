@@ -12,8 +12,6 @@ import {
   Pin,
   Archive,
   Trash2,
-  ChevronDown,
-  ChevronRight,
   Plus,
   Globe,
   Database,
@@ -22,7 +20,16 @@ import {
   ArrowUp,
   Brain,
   Edit2,
-  Square
+  Square,
+  Search,
+  FileText,
+  Download,
+  Copy,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Save,
+  X
 } from 'lucide-react';
 import { marked } from 'marked';
 import './App.css';
@@ -84,6 +91,418 @@ const AVAILABLE_MODELS = [
   { id: 'deepseek/deepseek-chat', name: 'DeepSeek V3', provider: 'openrouter' },
 ];
 
+// ==========================================================================
+// Vim-Enabled Document Editor Component
+// ==========================================================================
+interface DocumentEditorProps {
+  filePath: string;
+  content: string;
+  onChange: (val: string) => void;
+  onSave: () => void;
+  onClose: () => void;
+  isSplitView: boolean;
+  onToggleSplit: () => void;
+  isVimMode: boolean;
+  onToggleVim: () => void;
+  isModified: boolean;
+  setIsModified: (val: boolean) => void;
+}
+
+const DocumentEditor: React.FC<DocumentEditorProps> = ({
+  filePath,
+  content,
+  onChange,
+  onSave,
+  onClose,
+  isSplitView,
+  onToggleSplit,
+  isVimMode,
+  onToggleVim,
+  isModified,
+  setIsModified
+}) => {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [vimMode, setVimMode] = useState<'normal' | 'insert' | 'command'>('normal');
+  const [cmdBuffer, setCmdBuffer] = useState('');
+  const [yankBuffer, setYankBuffer] = useState('');
+  const [buffer, setBuffer] = useState('');
+  const [history, setHistory] = useState<string[]>([]);
+  const [cursorPos, setCursorPos] = useState(0);
+
+  // Sync selection pos on state update
+  const setCursor = (newPos: number) => {
+    setCursorPos(newPos);
+    setTimeout(() => {
+      const textarea = textareaRef.current;
+      if (textarea) {
+        textarea.focus();
+        textarea.selectionStart = newPos;
+        textarea.selectionEnd = newPos;
+      }
+    }, 0);
+  };
+
+  // Keep track of cursor position changes
+  const handleSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    setCursorPos(e.currentTarget.selectionStart);
+  };
+
+  const executeCommand = (cmd: string) => {
+    const cleanCmd = cmd.trim();
+    if (cleanCmd === ':w') {
+      onSave();
+    } else if (cleanCmd === ':q') {
+      onClose();
+    } else if (cleanCmd === ':wq') {
+      onSave();
+      onClose();
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    if (!isVimMode) {
+      if (!e.ctrlKey && !e.metaKey && e.key.length === 1) {
+        setIsModified(true);
+      }
+      return;
+    }
+
+    const pos = textarea.selectionStart;
+    const text = textarea.value;
+
+    if (vimMode === 'insert') {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setVimMode('normal');
+        setHistory(prev => [...prev.slice(-49), text]); // Keep last 50 states
+      } else {
+        if (!e.ctrlKey && !e.metaKey && e.key.length === 1) {
+          setIsModified(true);
+        }
+      }
+      return;
+    }
+
+    // Normal or Command Mode
+    e.preventDefault();
+
+    if (vimMode === 'command') {
+      if (e.key === 'Escape') {
+        setVimMode('normal');
+        setCmdBuffer('');
+        setCursor(pos);
+      } else if (e.key === 'Enter') {
+        executeCommand(cmdBuffer);
+        setVimMode('normal');
+        setCmdBuffer('');
+      } else if (e.key === 'Backspace') {
+        setCmdBuffer(prev => prev.slice(0, -1));
+      } else if (e.key.length === 1) {
+        setCmdBuffer(prev => prev + e.key);
+      }
+      return;
+    }
+
+    // Normal mode parsing
+    const lines = text.split('\n');
+    
+    const getLineInfo = (index: number) => {
+      let currentPos = 0;
+      for (let i = 0; i < lines.length; i++) {
+        const lineStart = currentPos;
+        const lineEnd = currentPos + lines[i].length;
+        if (index >= lineStart && index <= lineEnd + (i === lines.length - 1 ? 0 : 1)) {
+          return {
+            lineIndex: i,
+            lineText: lines[i],
+            lineStart,
+            lineEnd,
+            colOffset: index - lineStart
+          };
+        }
+        currentPos = lineEnd + 1; // +1 for '\n'
+      }
+      return { lineIndex: 0, lineText: '', lineStart: 0, lineEnd: 0, colOffset: 0 };
+    };
+
+    const info = getLineInfo(pos);
+    const key = e.key;
+    const nextBuffer = buffer + key;
+
+    if (nextBuffer === 'gg') {
+      setBuffer('');
+      setCursor(0);
+      return;
+    } else if (nextBuffer === 'dd') {
+      setBuffer('');
+      const newLines = [...lines];
+      const deletedLine = newLines.splice(info.lineIndex, 1)[0] || '';
+      setYankBuffer(deletedLine + '\n');
+      const newText = newLines.join('\n');
+      onChange(newText);
+      setIsModified(true);
+      setHistory(prev => [...prev.slice(-49), text]);
+      const nextPos = Math.min(info.lineStart, newText.length);
+      setCursor(nextPos);
+      return;
+    } else if (nextBuffer === 'yy') {
+      setBuffer('');
+      setYankBuffer(info.lineText + '\n');
+      return;
+    }
+
+    if (key === 'g' || key === 'd' || key === 'y') {
+      setBuffer(key);
+      return;
+    } else {
+      setBuffer('');
+    }
+
+    switch (key) {
+      // Insertion modes
+      case 'i':
+        setVimMode('insert');
+        break;
+      case 'a':
+        setVimMode('insert');
+        setCursor(Math.min(pos + 1, text.length));
+        break;
+      case 'A':
+        setVimMode('insert');
+        setCursor(info.lineEnd);
+        break;
+      case 'I':
+        setVimMode('insert');
+        setCursor(info.lineStart);
+        break;
+      case 'o': {
+        setVimMode('insert');
+        const newText = text.substring(0, info.lineEnd) + '\n' + text.substring(info.lineEnd);
+        onChange(newText);
+        setIsModified(true);
+        setHistory(prev => [...prev.slice(-49), text]);
+        setCursor(info.lineEnd + 1);
+        break;
+      }
+      case 'O': {
+        setVimMode('insert');
+        const newText = text.substring(0, info.lineStart) + '\n' + text.substring(info.lineStart);
+        onChange(newText);
+        setIsModified(true);
+        setHistory(prev => [...prev.slice(-49), text]);
+        setCursor(info.lineStart);
+        break;
+      }
+
+      // Cursor movement
+      case 'h':
+      case 'ArrowLeft':
+        if (pos > info.lineStart) {
+          setCursor(pos - 1);
+        }
+        break;
+      case 'l':
+      case 'ArrowRight':
+        if (pos < info.lineEnd) {
+          setCursor(pos + 1);
+        }
+        break;
+      case 'j':
+      case 'ArrowDown': {
+        if (info.lineIndex < lines.length - 1) {
+          const nextLineText = lines[info.lineIndex + 1];
+          const nextLineStart = info.lineEnd + 1;
+          const targetCol = Math.min(info.colOffset, nextLineText.length);
+          setCursor(nextLineStart + targetCol);
+        }
+        break;
+      }
+      case 'k':
+      case 'ArrowUp': {
+        if (info.lineIndex > 0) {
+          const prevLineText = lines[info.lineIndex - 1];
+          let prevLineStart = 0;
+          for (let i = 0; i < info.lineIndex - 1; i++) {
+            prevLineStart += lines[i].length + 1;
+          }
+          const targetCol = Math.min(info.colOffset, prevLineText.length);
+          setCursor(prevLineStart + targetCol);
+        }
+        break;
+      }
+      case '0':
+        setCursor(info.lineStart);
+        break;
+      case '$':
+        setCursor(info.lineEnd);
+        break;
+
+      // Word jumps
+      case 'w': {
+        const nextWordIndex = text.slice(pos).search(/\s+\S/);
+        if (nextWordIndex !== -1) {
+          setCursor(pos + nextWordIndex + text.slice(pos + nextWordIndex).search(/\S/));
+        } else {
+          setCursor(text.length);
+        }
+        break;
+      }
+      case 'b': {
+        const sliced = text.slice(0, pos);
+        const match = sliced.match(/\S+\s*$/);
+        if (match) {
+          setCursor(pos - match[0].length);
+        } else {
+          setCursor(0);
+        }
+        break;
+      }
+
+      // Edits
+      case 'x': {
+        if (pos < text.length) {
+          const newText = text.substring(0, pos) + text.substring(pos + 1);
+          onChange(newText);
+          setIsModified(true);
+          setHistory(prev => [...prev.slice(-49), text]);
+          setCursor(Math.min(pos, newText.length - 1));
+        }
+        break;
+      }
+      case 'p': {
+        if (yankBuffer) {
+          const pastePos = info.lineEnd;
+          const newText = text.substring(0, pastePos) + '\n' + yankBuffer.trim() + text.substring(pastePos);
+          onChange(newText);
+          setIsModified(true);
+          setHistory(prev => [...prev.slice(-49), text]);
+          setCursor(pastePos + 1);
+        }
+        break;
+      }
+      case 'P': {
+        if (yankBuffer) {
+          const pastePos = info.lineStart;
+          const newText = text.substring(0, pastePos) + yankBuffer.trim() + '\n' + text.substring(pastePos);
+          onChange(newText);
+          setIsModified(true);
+          setHistory(prev => [...prev.slice(-49), text]);
+          setCursor(pastePos);
+        }
+        break;
+      }
+      case 'u': {
+        if (history.length > 0) {
+          const prevState = history[history.length - 1];
+          setHistory(prev => prev.slice(0, -1));
+          onChange(prevState);
+          setIsModified(true);
+          setCursor(Math.min(pos, prevState.length));
+        }
+        break;
+      }
+      case 'G':
+        setCursor(text.length);
+        break;
+      case ':':
+        setVimMode('command');
+        setCmdBuffer(':');
+        break;
+      default:
+        break;
+    }
+  };
+
+  const displayName = filePath.split('/').pop() || filePath;
+
+  return (
+    <div className={`document-editor-pane ${!isSplitView ? 'full-width' : ''}`}>
+      <div className="editor-header">
+        <div className="editor-title" title={filePath}>
+          <FileText size={16} color="var(--accent-purple)" />
+          <span>{displayName} {isModified && '*'}</span>
+        </div>
+        <div className="editor-actions">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={onToggleSplit}
+            style={{ fontSize: '11px', padding: '4px 8px' }}
+          >
+            {isSplitView ? 'Full View' : 'Split View'}
+          </button>
+          <button
+            type="button"
+            className={`btn-secondary ${isVimMode ? 'active' : ''}`}
+            onClick={onToggleVim}
+            style={{ 
+              fontSize: '11px', 
+              padding: '4px 8px',
+              background: isVimMode ? 'rgba(144, 97, 249, 0.1)' : 'transparent',
+              borderColor: isVimMode ? 'var(--accent-purple)' : 'var(--border-glass)',
+              color: isVimMode ? 'var(--accent-purple)' : 'var(--text-primary)'
+            }}
+          >
+            Vim Mode
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={onSave}
+            style={{ fontSize: '11px', padding: '4px 8px', background: 'var(--accent-purple)', border: 'none' }}
+          >
+            <Save size={12} style={{ marginRight: '4px' }} />
+            Save
+          </button>
+          <button
+            type="button"
+            className="chat-action-btn"
+            onClick={onClose}
+            style={{ color: 'var(--text-muted)' }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+      </div>
+
+      <textarea
+        ref={textareaRef}
+        className="editor-textarea"
+        value={content}
+        onChange={(e) => {
+          if (!isVimMode) {
+            onChange(e.target.value);
+            setIsModified(true);
+          }
+        }}
+        onKeyDown={handleKeyDown}
+        onSelect={handleSelect}
+        placeholder={isVimMode ? "Press 'i' to insert text. Press 'Esc' to return to normal mode." : "Type your document text here..."}
+      />
+
+      <div className="editor-status-bar">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          {isVimMode ? (
+            <span className={`vim-status-tag ${vimMode}`}>
+              {vimMode === 'command' ? cmdBuffer || ':' : `-- ${vimMode} --`}
+            </span>
+          ) : (
+            <span className="editor-indicator-pill">TEXT</span>
+          )}
+          {buffer && <span className="editor-indicator-pill">{buffer}</span>}
+        </div>
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <span>Cursor: {cursorPos}</span>
+          <span>Lines: {content.split('\n').length}</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function App() {
   // Chats & Session State
   const [chats, setChats] = useState<ChatSession[]>([]);
@@ -103,12 +522,66 @@ function App() {
   const [selectedModel, setSelectedModel] = useState('google/gemini-2.5-flash');
   const [isGenerating, setIsGenerating] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const pollingIntervalRef = useRef<any>(null);
   const [webSearchEnabled, setWebSearchEnabled] = useState(() => {
     const saved = localStorage.getItem('webSearchEnabled');
     return saved === null ? true : saved === 'true';
   });
   const [localBrainEnabled, setLocalBrainEnabled] = useState(() => localStorage.getItem('localBrainEnabled') === 'true');
   const [expandedSources, setExpandedSources] = useState<Record<number, boolean>>({});
+  
+  // Deep Research States
+  interface ResearchSessionOverview {
+    id: string;
+    query: string;
+    model_name: string;
+    max_rounds: number;
+    current_round: number;
+    status: 'running' | 'done' | 'failed' | 'cancelled';
+    started_at: number;
+    completed_at: number | null;
+    sources_count: number;
+  }
+  
+  interface ResearchLogEvent {
+    timestamp: number;
+    type: string;
+    message: string;
+    data?: any;
+  }
+  
+  interface ResearchSessionFull {
+    id: string;
+    query: string;
+    model_name: string;
+    max_rounds: number;
+    current_round: number;
+    status: 'running' | 'done' | 'failed' | 'cancelled';
+    logs: ResearchLogEvent[];
+    sources: { title: string; url: string; snippet?: string }[];
+    evolving_report: string;
+    research_plan: string;
+    error: string | null;
+    started_at: number;
+    completed_at: number | null;
+  }
+
+  const [activeTab, setActiveTab] = useState<'chat' | 'research' | 'documents'>('chat');
+  const [researchQuery, setResearchQuery] = useState('');
+  const [researchMaxRounds, setResearchMaxRounds] = useState(3);
+  const [isResearching, setIsResearching] = useState(false);
+  const [activeResearchSessionId, setActiveResearchSessionId] = useState<string | null>(null);
+  const [researchSessions, setResearchSessions] = useState<ResearchSessionOverview[]>([]);
+  
+  // Document Editor States
+  const [activeDocPath, setActiveDocPath] = useState<string | null>(null);
+  const [activeDocContent, setActiveDocContent] = useState('');
+  const [isSplitView, setIsSplitView] = useState(true);
+  const [isVimMode, setIsVimMode] = useState(false);
+  const [isDocModified, setIsDocModified] = useState(false);
+  const [selectedResearchSession, setSelectedResearchSession] = useState<ResearchSessionFull | null>(null);
+  const [isCopied, setIsCopied] = useState(false);
+  const [researchError, setResearchError] = useState<string | null>(null);
   
   // Settings States
   const [settings, setSettings] = useState<SettingsConfig>({
@@ -207,6 +680,7 @@ function App() {
     fetchBrainStatus();
     fetchProjectStatus();
     fetchProjects();
+    fetchResearchSessions();
   }, []);
 
   // Auto-focus rename input
@@ -505,6 +979,263 @@ function App() {
     }
   };
 
+  // Deep Research API & Helper Functions
+  const fetchResearchSessions = async () => {
+    try {
+      const res = await fetch('http://localhost:8000/api/research/sessions');
+      if (res.ok) {
+        const data = await res.json();
+        setResearchSessions(data);
+      }
+    } catch (e) {
+      console.error('Failed to fetch research sessions:', e);
+    }
+  };
+
+  const startDeepResearch = async () => {
+    if (!researchQuery.trim() || isResearching) return;
+
+    setIsResearching(true);
+    setResearchError(null);
+    setSelectedResearchSession(null);
+    
+    // Clear any previous interval
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+
+    try {
+      const res = await fetch('http://localhost:8000/api/research/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: researchQuery.trim(),
+          model: selectedModel,
+          max_rounds: researchMaxRounds
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setActiveResearchSessionId(data.session_id);
+        
+        // Start polling for status
+        pollResearchStatus(data.session_id);
+        pollingIntervalRef.current = setInterval(() => {
+          pollResearchStatus(data.session_id);
+        }, 2000);
+      } else {
+        const errData = await res.json();
+        setResearchError(errData.detail || 'Failed to start deep research');
+        setIsResearching(false);
+      }
+    } catch (e: any) {
+      console.error('Failed to start research:', e);
+      setResearchError(e.message || 'Network connection failed');
+      setIsResearching(false);
+    }
+  };
+
+  const pollResearchStatus = async (sessionId: string) => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/research/status/${sessionId}`);
+      if (res.ok) {
+        const data: ResearchSessionFull = await res.json();
+        setSelectedResearchSession(data);
+        
+        if (data.status === 'done' || data.status === 'failed' || data.status === 'cancelled') {
+          // Finished! Stop polling
+          if (pollingIntervalRef.current) {
+            clearInterval(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+          setIsResearching(false);
+          setActiveResearchSessionId(null);
+          fetchResearchSessions(); // Refresh history list
+        }
+      }
+    } catch (e) {
+      console.error('Error polling research status:', e);
+    }
+  };
+
+  const cancelDeepResearch = async () => {
+    const sessionId = activeResearchSessionId || selectedResearchSession?.id;
+    if (!sessionId) return;
+    
+    try {
+      const res = await fetch(`http://localhost:8000/api/research/cancel/${sessionId}`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+        setIsResearching(false);
+        setActiveResearchSessionId(null);
+        if (selectedResearchSession) {
+          setSelectedResearchSession({
+            ...selectedResearchSession,
+            status: 'cancelled'
+          });
+        }
+        fetchResearchSessions();
+      }
+    } catch (e) {
+      console.error('Failed to cancel research:', e);
+    }
+  };
+
+  const viewResearchSession = async (sessionId: string) => {
+    // If clicking a historical session, switch view to that session
+    setSelectedResearchSession(null);
+    setResearchError(null);
+    
+    // Clear polling if running
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    setIsResearching(false);
+    setActiveResearchSessionId(null);
+
+    try {
+      const res = await fetch(`http://localhost:8000/api/research/session/${sessionId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedResearchSession(data);
+        setResearchQuery(data.query);
+        setResearchMaxRounds(data.max_rounds);
+        
+        // If it's somehow still running, restart polling
+        if (data.status === 'running') {
+          setIsResearching(true);
+          setActiveResearchSessionId(sessionId);
+          pollingIntervalRef.current = setInterval(() => {
+            pollResearchStatus(sessionId);
+          }, 2000);
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load research session:', e);
+    }
+  };
+
+  const deleteResearchSession = async (sessionId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm('Are you sure you want to delete this research session?')) return;
+    
+    try {
+      const res = await fetch(`http://localhost:8000/api/research/session/${sessionId}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        if (selectedResearchSession?.id === sessionId) {
+          setSelectedResearchSession(null);
+        }
+        fetchResearchSessions();
+      }
+    } catch (e) {
+      console.error('Failed to delete research session:', e);
+    }
+  };
+
+  const copyReportToClipboard = () => {
+    if (!selectedResearchSession?.evolving_report) return;
+    navigator.clipboard.writeText(selectedResearchSession.evolving_report);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
+
+  const downloadReport = () => {
+    if (!selectedResearchSession?.evolving_report) return;
+    const element = document.createElement("a");
+    const file = new Blob([selectedResearchSession.evolving_report], { type: 'text/markdown' });
+    element.href = URL.createObjectURL(file);
+    
+    // Create clean file name
+    const safeTitle = selectedResearchSession.query
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .slice(0, 40);
+    element.download = `research_report_${safeTitle || 'output'}.md`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+  };
+
+  // Clear polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, []);
+  // Document Editor Helper Functions
+  const openDocument = async (filePath: string) => {
+    try {
+      const res = await fetch(`http://localhost:8000/api/project/file?path=${encodeURIComponent(filePath)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setActiveDocPath(data.path);
+        setActiveDocContent(data.content);
+        setIsDocModified(false);
+      }
+    } catch (e) {
+      console.error('Failed to open document:', e);
+    }
+  };
+
+  const saveDocument = async (customContent?: string) => {
+    if (!activeDocPath) return;
+    const contentToSave = customContent !== undefined ? customContent : activeDocContent;
+    try {
+      const res = await fetch('http://localhost:8000/api/project/file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: activeDocPath,
+          content: contentToSave
+        })
+      });
+      if (res.ok) {
+        setIsDocModified(false);
+        // Refresh project files
+        if (typeof fetchProjectStatus === 'function') {
+          fetchProjectStatus();
+        }
+      }
+    } catch (e) {
+      console.error('Failed to save document:', e);
+    }
+  };
+
+  const createNewDocument = async () => {
+    const filename = prompt('Enter document name (e.g. notes.md or memo.txt):', 'notes.md');
+    if (!filename) return;
+    
+    const validExts = ['.txt', '.md', '.markdown', '.json', '.py', '.js', '.ts', '.css', '.html'];
+    const hasValidExt = validExts.some(ext => filename.toLowerCase().endsWith(ext));
+    const finalFilename = hasValidExt ? filename : `${filename}.txt`;
+    
+    try {
+      const res = await fetch('http://localhost:8000/api/project/file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: finalFilename,
+          content: ''
+        })
+      });
+      if (res.ok) {
+        openDocument(finalFilename);
+      }
+    } catch (e) {
+      console.error('Failed to create document:', e);
+    }
+  };
   const fetchChats = async (selectNewest: boolean = true) => {
     try {
       const res = await fetch('http://localhost:8000/api/chats');
@@ -995,6 +1726,281 @@ function App() {
     );
   };
 
+  const renderResearchTabContent = () => {
+    // 1. If currently researching or view has selectedResearchSession
+    if (selectedResearchSession) {
+      const session = selectedResearchSession;
+      
+      // A. If the research session is running
+      if (session.status === 'running') {
+        const activeRound = session.current_round;
+        const totalRounds = session.max_rounds;
+        
+        return (
+          <div className="research-running-container animate-fade-in">
+            <div className="research-running-header">
+              <div className="research-query-display" title={session.query}>
+                Researching: "{session.query}"
+              </div>
+              <button 
+                type="button" 
+                className="btn-secondary" 
+                onClick={cancelDeepResearch}
+                style={{ borderColor: 'var(--accent-red)', color: 'var(--accent-red)' }}
+              >
+                Cancel Research
+              </button>
+            </div>
+            
+            <div className="timeline-tracker">
+              {/* Step 1: Planning */}
+              <div className={`timeline-step ${session.research_plan ? 'completed' : 'active'}`}>
+                <div className="timeline-icon-wrapper">
+                  {session.research_plan ? <Check size={12} /> : <Sparkles size={12} />}
+                </div>
+                <div className="timeline-content-card">
+                  <div className="timeline-step-header">
+                    <span className="timeline-step-title">Research Strategy & Plan</span>
+                    {session.research_plan && <span className="timeline-step-time">Completed</span>}
+                  </div>
+                  <div className="timeline-step-detail">
+                    {session.research_plan ? 'Generated sub-questions and targets to guide search agents.' : 'Formulating research sub-questions...'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Step 2: Iterative search rounds */}
+              {Array.from({ length: totalRounds }).map((_, rIdx) => {
+                const roundNum = rIdx + 1;
+                let stepStatus: 'pending' | 'active' | 'completed' = 'pending';
+                if (activeRound > roundNum) stepStatus = 'completed';
+                else if (activeRound === roundNum) stepStatus = 'active';
+
+                // Find events for this round
+                const roundLogs = session.logs.filter(log => 
+                  (log.message.includes(`round ${roundNum}`) || (log.type === 'query' && activeRound === roundNum))
+                );
+                
+                const lastLogMessage = roundLogs.length > 0 ? roundLogs[roundLogs.length - 1].message : `Gathering information...`;
+
+                return (
+                  <div key={roundNum} className={`timeline-step ${stepStatus}`}>
+                    <div className="timeline-icon-wrapper">
+                      {stepStatus === 'completed' ? <Check size={12} /> : stepStatus === 'active' ? <Search size={12} className="pulse-icon-blue" style={{ color: 'var(--accent-blue)' }} /> : <Info size={12} />}
+                    </div>
+                    <div className="timeline-content-card">
+                      <div className="timeline-step-header">
+                        <span className="timeline-step-title">Round {roundNum} of {totalRounds}</span>
+                        {stepStatus === 'completed' && <span className="timeline-step-time">Completed</span>}
+                      </div>
+                      <div className="timeline-step-detail">
+                        {stepStatus === 'pending' ? 'Waiting to start...' : lastLogMessage}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Step 3: Synthesis */}
+              <div className="timeline-step pending">
+                <div className="timeline-icon-wrapper">
+                  <FileText size={12} />
+                </div>
+                <div className="timeline-content-card">
+                  <div className="timeline-step-header">
+                    <span className="timeline-step-title">Final Report Synthesis</span>
+                  </div>
+                  <div className="timeline-step-detail">
+                    Compiling gathered data...
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      // B. If the research session is completed (done, failed, or cancelled)
+      return (
+        <div className="research-report-container animate-fade-in">
+          {/* Markdown Report Viewer */}
+          <div className="report-viewer-panel">
+            <div className="report-header-actions">
+              <div>
+                <span className="api-status-pill" style={{ textTransform: 'uppercase', fontSize: '11px', background: session.status === 'done' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: session.status === 'done' ? 'var(--accent-green)' : 'var(--accent-red)', border: `1px solid ${session.status === 'done' ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`, padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
+                  {session.status}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={copyReportToClipboard}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', padding: '6px 12px' }}
+                >
+                  {isCopied ? <Check size={14} color="var(--accent-green)" /> : <Copy size={14} />}
+                  <span>{isCopied ? 'Copied!' : 'Copy'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={downloadReport}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', padding: '6px 12px' }}
+                >
+                  <Download size={14} />
+                  <span>Download</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    setSelectedResearchSession(null);
+                    setResearchQuery('');
+                  }}
+                  style={{ fontSize: '12.5px', padding: '6px 12px' }}
+                >
+                  New
+                </button>
+              </div>
+            </div>
+            
+            <div className="report-title-text" style={{ marginBottom: '8px' }}>{session.query}</div>
+            <div className="report-meta-info">
+              <span>Model: {session.model_name}</span>
+              <span>•</span>
+              <span>Rounds: {session.current_round}</span>
+              <span>•</span>
+              <span>Date: {new Date(session.started_at * 1000).toLocaleString()}</span>
+            </div>
+
+            {session.status === 'failed' && (
+              <div style={{ padding: '16px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', color: 'var(--accent-red)', marginBottom: '24px', fontSize: '13.5px' }}>
+                <strong>Research Failed:</strong> {session.error || 'Unknown error occurred.'}
+              </div>
+            )}
+
+            <div 
+              className="report-body-markdown markdown-content"
+              dangerouslySetInnerHTML={renderMarkdown(session.evolving_report || '*No report text generated yet.*')}
+            />
+          </div>
+
+          {/* Sidebar Cited Sources */}
+          <div className="report-sources-panel">
+            <div className="sources-panel-header">
+              <Globe size={16} style={{ color: 'var(--accent-blue)' }} />
+              <span>Cited Sources ({session.sources.length})</span>
+            </div>
+            <div className="sources-list-scroll">
+              {session.sources.length === 0 ? (
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '24px 0' }}>
+                  No sources cited.
+                </div>
+              ) : (
+                session.sources.map((src, srcIdx) => (
+                  <div key={srcIdx} className="source-item-card">
+                    <a 
+                      href={src.url} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="source-item-title"
+                    >
+                      {src.title || 'Source URL'}
+                    </a>
+                    <span className="source-item-url" title={src.url}>{src.url}</span>
+                    {src.snippet && (
+                      <span className="source-item-snippet">{src.snippet}</span>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 2. Default: Setup Deep Research form
+    return (
+      <div className="research-empty-state animate-fade-in">
+        <div className="logo-icon" style={{ width: '48px', height: '48px', marginBottom: '16px', background: 'linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%)' }}>
+          <Search size={24} color="white" />
+        </div>
+        <h2 className="research-title">Deep Research Strategist</h2>
+        <p className="research-subtitle">
+          Input a research topic. Higgins will run multiple sequential rounds of web searches, crawl pages, extract critical evidence, and synthesize an expert-level report.
+        </p>
+
+        <div className="research-form-card glass-panel" style={{ background: 'var(--bg-panel)' }}>
+          {researchError && (
+            <div style={{ padding: '12px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: '8px', color: 'var(--accent-red)', marginBottom: '16px', fontSize: '13px', textAlign: 'left' }}>
+              {researchError}
+            </div>
+          )}
+
+          <div className="research-textarea-wrapper">
+            <textarea
+              className="research-textarea"
+              placeholder="What would you like me to research in depth? E.g., 'Compare Apple Vision Pro vs Meta Quest 3 features, comfort, and developer ecosystem...'"
+              value={researchQuery}
+              onChange={e => setResearchQuery(e.target.value)}
+              disabled={isResearching}
+            />
+          </div>
+
+          <div className="research-options-grid">
+            <div className="research-option-group">
+              <span className="research-option-label">Research Rounds</span>
+              <select
+                className="custom-select"
+                value={researchMaxRounds}
+                onChange={e => setResearchMaxRounds(Number(e.target.value))}
+                disabled={isResearching}
+              >
+                <option value={1}>1 Round (Quick)</option>
+                <option value={2}>2 Rounds (Standard)</option>
+                <option value={3}>3 Rounds (Recommended)</option>
+                <option value={4}>4 Rounds (Deep)</option>
+                <option value={5}>5 Rounds (Exhaustive)</option>
+              </select>
+            </div>
+
+            <div className="research-option-group">
+              <span className="research-option-label">Search Provider</span>
+              <div 
+                className="custom-select" 
+                style={{ 
+                  background: 'rgba(255,255,255,0.02)', 
+                  border: '1px solid var(--border-glass)', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '6px',
+                  cursor: 'default'
+                }}
+              >
+                <Globe size={14} style={{ color: 'var(--accent-blue)' }} />
+                <span style={{ textTransform: 'capitalize' }}>
+                  {settings.search_provider || 'duckduckgo'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={startDeepResearch}
+            disabled={!researchQuery.trim() || isResearching || !isKeyConfigured()}
+            style={{ width: '100%', height: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', background: 'linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%)', border: 'none', fontWeight: 600 }}
+          >
+            <Search size={16} />
+            <span>Launch Deep Research</span>
+          </button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="workspace-container">
       {/* Sidebar */}
@@ -1006,188 +2012,435 @@ function App() {
           <span className="logo-text">Higgins</span>
         </div>
 
-        <button 
-          className="new-chat-btn"
-          onClick={handleCreateNewChat}
-        >
-          <Plus size={16} />
-          <span>New Chat</span>
-        </button>
-
-        <div className="sidebar-divider"></div>
-
-        {/* Projects Section */}
-        <div className="chats-group" style={{ padding: '0 8px' }}>
-          <div 
-            className="group-header"
-            style={{ cursor: 'default' }}
+        {/* Tab Selection */}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', background: 'rgba(255,255,255,0.02)', padding: '4px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-glass)' }}>
+          <button
+            type="button"
+            onClick={() => setActiveTab('chat')}
+            style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              border: 'none',
+              background: activeTab === 'chat' ? 'rgba(255,255,255,0.06)' : 'transparent',
+              color: activeTab === 'chat' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              fontSize: '12.5px',
+              fontWeight: 500,
+              cursor: 'pointer',
+              transition: 'var(--transition-smooth)'
+            }}
           >
-            <span>Projects</span>
-            <button
-              type="button"
-              title="Add Project"
-              onClick={() => {
-                setIsProjectFolderPicker(true);
-                handleOpenFolderPicker('');
-              }}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-muted)',
-                cursor: 'pointer',
-                padding: '2px',
-                display: 'flex',
-                alignItems: 'center',
-                borderRadius: '4px',
-                transition: 'var(--transition-smooth)'
-              }}
-              onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent-purple)')}
-              onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
+            <MessageSquare size={14} />
+            <span>Chat</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('research')}
+            style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              border: 'none',
+              background: activeTab === 'research' ? 'rgba(255,255,255,0.06)' : 'transparent',
+              color: activeTab === 'research' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              fontSize: '12.5px',
+              fontWeight: 500,
+              cursor: 'pointer',
+              transition: 'var(--transition-smooth)'
+            }}
+          >
+            <Search size={14} />
+            <span>Research</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('documents')}
+            style={{
+              flex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              padding: '6px 12px',
+              borderRadius: '6px',
+              border: 'none',
+              background: activeTab === 'documents' ? 'rgba(255,255,255,0.06)' : 'transparent',
+              color: activeTab === 'documents' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              fontSize: '12.5px',
+              fontWeight: 500,
+              cursor: 'pointer',
+              transition: 'var(--transition-smooth)'
+            }}
+          >
+            <FileText size={14} />
+            <span>Docs</span>
+          </button>
+        </div>
+
+        {activeTab === 'chat' ? (
+          <>
+            <button 
+              className="new-chat-btn"
+              onClick={handleCreateNewChat}
             >
-              <Plus size={14} />
+              <Plus size={16} />
+              <span>New Chat</span>
             </button>
-          </div>
-          {projectHistory.length === 0 ? (
-            <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '4px 12px' }}>
-              No projects yet
-            </div>
-          ) : (
-            <>
-              {(isProjectsExpanded ? projectHistory : projectHistory.slice(0, 5)).map((proj) => {
-                const isActive = proj.path === activeProjectPath;
-                return (
-                  <div
-                    key={proj.path}
-                    className={`chat-list-item ${isActive ? 'active' : ''}`}
-                    onClick={async () => {
-                      if (isActive) {
-                        const newVal = !isProjectPanelOpen;
-                        setIsProjectPanelOpen(newVal);
-                        localStorage.setItem('isProjectPanelOpen', String(newVal));
-                      } else {
-                        await handleSelectProjectFolder(proj.path);
-                      }
-                    }}
-                    title={proj.path}
-                  >
-                    <div className="chat-item-title-container">
-                      {isActive ? <FolderOpen size={14} className="nav-item-icon" style={{ color: 'var(--accent-purple)' }} /> : <Folder size={14} className="nav-item-icon" />}
-                      <span className="chat-item-title">{proj.name}</span>
-                    </div>
-                    <div className="chat-item-actions">
-                      <button
-                        className="chat-action-btn"
-                        title="Remove from list"
-                        onClick={(e) => handleRemoveProject(proj.path, e)}
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-              {projectHistory.length > 5 && (
+
+            <div className="sidebar-divider"></div>
+
+            {/* Projects Section */}
+            <div className="chats-group" style={{ padding: '0 8px' }}>
+              <div 
+                className="group-header"
+                style={{ cursor: 'default' }}
+              >
+                <span>Projects</span>
                 <button
                   type="button"
-                  onClick={() => setIsProjectsExpanded(!isProjectsExpanded)}
+                  title="Add Project"
+                  onClick={() => {
+                    setIsProjectFolderPicker(true);
+                    handleOpenFolderPicker('');
+                  }}
                   style={{
                     background: 'transparent',
                     border: 'none',
                     color: 'var(--text-muted)',
                     cursor: 'pointer',
-                    fontSize: '11px',
-                    padding: '4px 12px',
+                    padding: '2px',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '4px',
+                    borderRadius: '4px',
                     transition: 'var(--transition-smooth)'
                   }}
                   onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent-purple)')}
                   onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
                 >
-                  {isProjectsExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                  {isProjectsExpanded ? 'Show less' : `Show all (${projectHistory.length})`}
+                  <Plus size={14} />
                 </button>
+              </div>
+              {projectHistory.length === 0 ? (
+                <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '4px 12px' }}>
+                  No projects yet
+                </div>
+              ) : (
+                <>
+                  {(isProjectsExpanded ? projectHistory : projectHistory.slice(0, 5)).map((proj) => {
+                    const isActive = proj.path === activeProjectPath;
+                    return (
+                      <div
+                        key={proj.path}
+                        className={`chat-list-item ${isActive ? 'active' : ''}`}
+                        onClick={async () => {
+                          if (isActive) {
+                            const newVal = !isProjectPanelOpen;
+                            setIsProjectPanelOpen(newVal);
+                            localStorage.setItem('isProjectPanelOpen', String(newVal));
+                          } else {
+                            await handleSelectProjectFolder(proj.path);
+                          }
+                        }}
+                        title={proj.path}
+                      >
+                        <div className="chat-item-title-container">
+                          {isActive ? <FolderOpen size={14} className="nav-item-icon" style={{ color: 'var(--accent-purple)' }} /> : <Folder size={14} className="nav-item-icon" />}
+                          <span className="chat-item-title">{proj.name}</span>
+                        </div>
+                        <div className="chat-item-actions">
+                          <button
+                            className="chat-action-btn"
+                            title="Remove from list"
+                            onClick={(e) => handleRemoveProject(proj.path, e)}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {projectHistory.length > 5 && (
+                    <button
+                      type="button"
+                      onClick={() => setIsProjectsExpanded(!isProjectsExpanded)}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--text-muted)',
+                        cursor: 'pointer',
+                        fontSize: '11px',
+                        padding: '4px 12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        transition: 'var(--transition-smooth)'
+                      }}
+                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--accent-purple)')}
+                      onMouseLeave={e => (e.currentTarget.style.color = 'var(--text-muted)')}
+                    >
+                      {isProjectsExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                      {isProjectsExpanded ? 'Show less' : `Show all (${projectHistory.length})`}
+                    </button>
+                  )}
+                </>
               )}
-            </>
-          )}
-        </div>
+            </div>
 
-        <div className="sidebar-divider"></div>
+            <div className="sidebar-divider"></div>
 
-        {/* Model Selector */}
-        <div className="model-selector-container">
-          <div className="sidebar-label">Active Model</div>
-          <select 
-            className="custom-select" 
-            value={selectedModel} 
-            onChange={handleModelChange}
-          >
-            {models.filter(m => m.provider === 'ollama').length > 0 && (
-              <optgroup label="Local Models (Ollama)">
-                {models.filter(m => m.provider === 'ollama').map(m => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-            {models.filter(m => m.provider !== 'ollama').length > 0 && (
-              <optgroup label="Cloud Models (API)">
-                {models.filter(m => m.provider !== 'ollama').map(m => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
-        </div>
-
-        {/* Conversations Lists */}
-        <div className="chats-section">
-          {/* Pinned Chats */}
-          {pinnedChats.length > 0 && (
-            <div className="chats-group">
-              <div 
-                className="group-header"
-                onClick={() => setIsPinnedCollapsed(!isPinnedCollapsed)}
+            {/* Model Selector */}
+            <div className="model-selector-container">
+              <div className="sidebar-label">Active Model</div>
+              <select 
+                className="custom-select" 
+                value={selectedModel} 
+                onChange={handleModelChange}
               >
-                <span>Pinned</span>
-                {isPinnedCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-              </div>
-              {!isPinnedCollapsed && pinnedChats.map(renderChatItem)}
+                {models.filter(m => m.provider === 'ollama').length > 0 && (
+                  <optgroup label="Local Models (Ollama)">
+                    {models.filter(m => m.provider === 'ollama').map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {models.filter(m => m.provider !== 'ollama').length > 0 && (
+                  <optgroup label="Cloud Models (API)">
+                    {models.filter(m => m.provider !== 'ollama').map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
             </div>
-          )}
 
-          {/* Active Chats */}
-          <div className="chats-group">
-            <div className="group-header">
-              <span>Recent Chats</span>
-            </div>
-            {activeChats.length === 0 && pinnedChats.length === 0 ? (
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px 12px' }}>
-                No active conversations
+            {/* Conversations Lists */}
+            <div className="chats-section" style={{ flex: 1, overflowY: 'auto' }}>
+              {/* Pinned Chats */}
+              {pinnedChats.length > 0 && (
+                <div className="chats-group">
+                  <div 
+                    className="group-header"
+                    onClick={() => setIsPinnedCollapsed(!isPinnedCollapsed)}
+                  >
+                    <span>Pinned</span>
+                    {isPinnedCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                  </div>
+                  {!isPinnedCollapsed && pinnedChats.map(renderChatItem)}
+                </div>
+              )}
+
+              {/* Active Chats */}
+              <div className="chats-group">
+                <div className="group-header">
+                  <span>Recent Chats</span>
+                </div>
+                {activeChats.length === 0 && pinnedChats.length === 0 ? (
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px 12px' }}>
+                    No active conversations
+                  </div>
+                ) : (
+                  activeChats.map(renderChatItem)
+                )}
               </div>
-            ) : (
-              activeChats.map(renderChatItem)
-            )}
-          </div>
 
-          {/* Archived Chats */}
-          {archivedChats.length > 0 && (
-            <div className="chats-group" style={{ marginTop: '8px' }}>
-              <div 
-                className="group-header"
-                onClick={() => setIsArchivedCollapsed(!isArchivedCollapsed)}
+              {/* Archived Chats */}
+              {archivedChats.length > 0 && (
+                <div className="chats-group" style={{ marginTop: '8px' }}>
+                  <div 
+                    className="group-header"
+                    onClick={() => setIsArchivedCollapsed(!isArchivedCollapsed)}
+                  >
+                    <span>Archived ({archivedChats.length})</span>
+                    {isArchivedCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                  </div>
+                  {!isArchivedCollapsed && archivedChats.map(renderChatItem)}
+                </div>
+              )}
+            </div>
+          </>
+        ) : activeTab === 'research' ? (
+          <>
+            <button 
+              className="new-chat-btn"
+              onClick={() => {
+                setSelectedResearchSession(null);
+                setResearchQuery('');
+              }}
+              style={{
+                background: 'linear-gradient(135deg, var(--accent-blue) 0%, var(--accent-purple) 100%)',
+                boxShadow: '0 0 12px rgba(59, 130, 246, 0.2)'
+              }}
+            >
+              <Plus size={16} />
+              <span>New Research</span>
+            </button>
+
+            <div className="sidebar-divider"></div>
+
+            {/* Model Selector */}
+            <div className="model-selector-container">
+              <div className="sidebar-label">Research Model</div>
+              <select 
+                className="custom-select" 
+                value={selectedModel} 
+                onChange={handleModelChange}
               >
-                <span>Archived ({archivedChats.length})</span>
-                {isArchivedCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-              </div>
-              {!isArchivedCollapsed && archivedChats.map(renderChatItem)}
+                {models.filter(m => m.provider === 'ollama').length > 0 && (
+                  <optgroup label="Local Models (Ollama)">
+                    {models.filter(m => m.provider === 'ollama').map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {models.filter(m => m.provider !== 'ollama').length > 0 && (
+                  <optgroup label="Cloud Models (API)">
+                    {models.filter(m => m.provider !== 'ollama').map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
             </div>
-          )}
-        </div>
+
+            {/* Research Sessions History */}
+            <div className="chats-section" style={{ flex: 1, overflowY: 'auto' }}>
+              <div className="chats-group">
+                <div className="group-header">
+                  <span>Recent Research</span>
+                </div>
+                {researchSessions.length === 0 ? (
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px 12px' }}>
+                    No research sessions yet
+                  </div>
+                ) : (
+                  researchSessions.map((session) => {
+                    const isActive = selectedResearchSession?.id === session.id;
+                    return (
+                      <div
+                        key={session.id}
+                        className={`chat-list-item ${isActive ? 'active' : ''}`}
+                        onClick={() => viewResearchSession(session.id)}
+                      >
+                        <div className="chat-item-title-container">
+                          <FileText size={14} className="nav-item-icon" style={{ color: isActive ? 'var(--accent-blue)' : 'var(--text-secondary)' }} />
+                          <span className="chat-item-title">{session.query}</span>
+                        </div>
+                        <div className="chat-item-actions">
+                          {session.status === 'running' && (
+                            <span className="pulse-dot" style={{ backgroundColor: 'var(--accent-blue)', marginRight: '6px' }}></span>
+                          )}
+                          <button
+                            className="chat-action-btn"
+                            title="Delete Session"
+                            onClick={(e) => deleteResearchSession(session.id, e)}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </>
+        ) : (
+          <>
+            <button 
+              className="new-chat-btn"
+              onClick={createNewDocument}
+              style={{
+                background: 'linear-gradient(135deg, var(--accent-purple) 0%, var(--accent-blue) 100%)',
+                boxShadow: '0 0 12px rgba(144, 97, 249, 0.2)'
+              }}
+            >
+              <Plus size={16} />
+              <span>New Document</span>
+            </button>
+
+            <div className="sidebar-divider"></div>
+
+            {/* Split View Toggle for Documents tab */}
+            <div style={{ padding: '0 12px 12px 12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px' }}>
+                <span style={{ color: 'var(--text-secondary)', fontWeight: 500 }}>Split Screen Editor</span>
+                <input
+                  type="checkbox"
+                  checked={isSplitView}
+                  onChange={(e) => setIsSplitView(e.target.checked)}
+                  style={{
+                    cursor: 'pointer',
+                    width: '14px',
+                    height: '14px',
+                    accentColor: 'var(--accent-purple)'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div className="sidebar-divider"></div>
+
+            {/* Documents History list */}
+            <div className="chats-section" style={{ flex: 1, overflowY: 'auto' }}>
+              <div className="chats-group">
+                <div className="group-header">
+                  <span>Workspace Files</span>
+                </div>
+                {projectFiles.length === 0 ? (
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', padding: '6px 12px' }}>
+                    No project selected or empty folder.
+                  </div>
+                ) : (
+                  projectFiles
+                    .filter(f => 
+                      f.toLowerCase().endsWith('.txt') || 
+                      f.toLowerCase().endsWith('.md') || 
+                      f.toLowerCase().endsWith('.markdown') || 
+                      f.toLowerCase().endsWith('.json') || 
+                      f.toLowerCase().endsWith('.py') ||
+                      f.toLowerCase().endsWith('.js') ||
+                      f.toLowerCase().endsWith('.ts') ||
+                      f.toLowerCase().endsWith('.css') ||
+                      f.toLowerCase().endsWith('.html')
+                    )
+                    .map((filePath) => {
+                      const isActive = activeDocPath === filePath;
+                      const displayName = filePath.split('/').pop() || filePath;
+                      return (
+                        <div
+                          key={filePath}
+                          className={`chat-list-item ${isActive ? 'active' : ''}`}
+                          onClick={() => openDocument(filePath)}
+                          title={filePath}
+                        >
+                          <div className="chat-item-title-container">
+                            <FileText size={14} className="nav-item-icon" style={{ color: isActive ? 'var(--accent-purple)' : 'var(--text-secondary)' }} />
+                            <span className="chat-item-title">{displayName}</span>
+                          </div>
+                        </div>
+                      );
+                    })
+                )}
+              </div>
+            </div>
+          </>
+        )}
 
         {/* Sidebar Footer */}
         <div className="sidebar-footer">
@@ -1201,8 +2454,11 @@ function App() {
         </div>
       </aside>
 
-      {/* Main Workspace */}
-      <main className="chat-workspace">
+      {/* Main Workspace Wrapper */}
+      <div style={{ display: 'flex', flex: 1, width: '100%', height: '100%', overflow: 'hidden' }}>
+        <div style={{ display: activeDocPath && !isSplitView ? 'none' : 'flex', flex: 1, height: '100%', overflow: 'hidden' }}>
+          {activeTab === 'chat' ? (
+        <main className="chat-workspace">
         <header className="chat-header">
           <div className="header-model-info">
             <Cpu size={16} className="nav-item-icon" />
@@ -1439,6 +2695,42 @@ function App() {
           </div>
         </div>
       </main>
+          ) : activeTab === 'research' ? (
+            <main className="research-tab-container">
+              {renderResearchTabContent()}
+            </main>
+          ) : (
+            <main className="research-tab-container">
+              <div className="research-empty-state">
+                <div className="logo-icon" style={{ width: '48px', height: '48px', marginBottom: '16px', background: 'linear-gradient(135deg, var(--accent-purple) 0%, var(--accent-blue) 100%)' }}>
+                  <FileText size={24} color="white" />
+                </div>
+                <h2 className="research-title">Document Workspace</h2>
+                <p className="research-subtitle">
+                  Select an existing file from the sidebar to open it, or click "New Document" to create one.
+                </p>
+              </div>
+            </main>
+          )}
+        </div>
+
+        {/* Document Editor Pane */}
+        {activeDocPath && (
+          <DocumentEditor
+            filePath={activeDocPath}
+            content={activeDocContent}
+            onChange={setActiveDocContent}
+            onSave={() => saveDocument()}
+            onClose={() => setActiveDocPath(null)}
+            isSplitView={isSplitView}
+            onToggleSplit={() => setIsSplitView(!isSplitView)}
+            isVimMode={isVimMode}
+            onToggleVim={() => setIsVimMode(!isVimMode)}
+            isModified={isDocModified}
+            setIsModified={setIsDocModified}
+          />
+        )}
+      </div>
 
       {isProjectPanelOpen && (
         <aside className="project-panel glass-panel animate-slide-in">

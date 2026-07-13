@@ -12,6 +12,15 @@ from pydantic import BaseModel
 import httpx
 import google.generativeai as genai
 from dotenv import load_dotenv
+import uuid
+
+# Import Deep Research functions
+from deep_research import (
+    run_deep_research_task,
+    _sessions_registry,
+    load_research_sessions,
+    save_research_sessions
+)
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -407,12 +416,8 @@ async def get_project_status():
     project_path = config.get("active_project_path", "")
     
     if not project_path:
-        return {
-            "active_project_path": "",
-            "project_name": "",
-            "metadata_content": "",
-            "files": []
-        }
+        project_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # Do not modify config, just use as a fallback so the app starts with files listed
         
     if not os.path.exists(project_path) or not os.path.isdir(project_path):
         return {
@@ -514,7 +519,7 @@ async def get_project_file(path: str):
     config = load_settings()
     project_path = config.get("active_project_path", "")
     if not project_path:
-        raise HTTPException(status_code=400, detail="No active project folder selected.")
+        project_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
     safe_path = os.path.abspath(os.path.join(project_path, path))
     if not safe_path.startswith(os.path.abspath(project_path)):
@@ -535,7 +540,7 @@ async def write_project_file(payload: ProjectFileWritePayload):
     config = load_settings()
     project_path = config.get("active_project_path", "")
     if not project_path:
-        raise HTTPException(status_code=400, detail="No active project folder selected.")
+        project_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         
     safe_path = os.path.abspath(os.path.join(project_path, payload.path))
     if not safe_path.startswith(os.path.abspath(project_path)):
@@ -711,7 +716,7 @@ async def perform_web_search(query: str, config: Dict[str, Any]) -> Tuple[str, L
     return "\n".join(formatted), results
 
 # LLM streaming helper generators
-async def stream_gemini(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None, background_tasks: Optional[BackgroundTasks] = None, user_prompt: str = ""):
+async def stream_gemini(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None, background_tasks: Optional[BackgroundTasks] = None, user_prompt: str = "", original_messages: Optional[List[Dict[str, str]]] = None):
     accumulated_content = ""
     try:
         genai.configure(api_key=api_key)
@@ -735,7 +740,7 @@ async def stream_gemini(api_key: str, model_name: str, messages: List[Dict[str, 
                 accumulated_content += chunk.text
                 yield f"data: {json.dumps({'type': 'chunk', 'content': chunk.text})}\n\n"
         
-        save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
+        save_chat_messages(chat_id, original_messages or messages, accumulated_content, sources=sources)
         process_project_file_actions(accumulated_content)
         if background_tasks and user_prompt:
             background_tasks.add_task(extract_memories_task, user_prompt, accumulated_content)
@@ -745,7 +750,7 @@ async def stream_gemini(api_key: str, model_name: str, messages: List[Dict[str, 
         logger.error(f"Gemini streaming error: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
-async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None, background_tasks: Optional[BackgroundTasks] = None, user_prompt: str = ""):
+async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None, background_tasks: Optional[BackgroundTasks] = None, user_prompt: str = "", original_messages: Optional[List[Dict[str, str]]] = None):
     accumulated_content = ""
     try:
         async with httpx.AsyncClient() as client:
@@ -777,7 +782,7 @@ async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[s
                     if line.startswith("data: "):
                         data_str = line[6:]
                         if data_str == "[DONE]":
-                            save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
+                            save_chat_messages(chat_id, original_messages or messages, accumulated_content, sources=sources)
                             process_project_file_actions(accumulated_content)
                             if background_tasks and user_prompt:
                                 background_tasks.add_task(extract_memories_task, user_prompt, accumulated_content)
@@ -798,7 +803,7 @@ async def stream_openrouter(api_key: str, model_name: str, messages: List[Dict[s
         logger.error(f"OpenRouter streaming error: {e}")
         yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
 
-async def stream_ollama(model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None, background_tasks: Optional[BackgroundTasks] = None, user_prompt: str = ""):
+async def stream_ollama(model_name: str, messages: List[Dict[str, str]], chat_id: str, sources: Optional[List[Dict[str, Any]]] = None, background_tasks: Optional[BackgroundTasks] = None, user_prompt: str = "", original_messages: Optional[List[Dict[str, str]]] = None):
     accumulated_content = ""
     try:
         ollama_messages = []
@@ -836,7 +841,7 @@ async def stream_ollama(model_name: str, messages: List[Dict[str, str]], chat_id
                             yield f"data: {json.dumps({'type': 'chunk', 'content': chunk_text})}\n\n"
                         
                         if data_json.get("done", False):
-                            save_chat_messages(chat_id, messages, accumulated_content, sources=sources)
+                            save_chat_messages(chat_id, original_messages or messages, accumulated_content, sources=sources)
                             process_project_file_actions(accumulated_content)
                             if background_tasks and user_prompt:
                                 background_tasks.add_task(extract_memories_task, user_prompt, accumulated_content)
@@ -1346,6 +1351,9 @@ Always keep GEMINI.MD updated with goals, timeline notes, and files you create.
         
     context_prefix = f"{memory_block}{project_block}"
     
+    # Preserve the original user messages (before context injection) for saving to chat history
+    original_messages = [{"role": m["role"], "content": m["content"]} for m in messages_dict]
+    
     if len(messages_dict) > 0:
         last_user_message = messages_dict[-1]
         if last_user_message["role"] == "user":
@@ -1389,8 +1397,8 @@ Please answer the user query, taking into account any relevant project context o
                 messages_dict[-1]["content"] = context_prompt
                 logger.info("Project & Memory context successfully injected into LLM payload.")
 
-    # Save the updated user message (and context) to the history
-    db["chats"][payload.chat_id]["messages"] = messages_dict
+    # Save the ORIGINAL (clean) user messages to the chat history, not the context-injected ones
+    db["chats"][payload.chat_id]["messages"] = original_messages
     save_chats_db(db)
     
     model_name = payload.model
@@ -1412,7 +1420,7 @@ Please answer the user query, taking into account any relevant project context o
         if not api_key:
             raise HTTPException(status_code=400, detail="Gemini API Key not set. Update settings first.")
         return StreamingResponse(
-            stream_gemini(api_key, model_name, messages_dict, payload.chat_id, sources=sources_metadata, background_tasks=background_tasks, user_prompt=clean_user_prompt),
+            stream_gemini(api_key, model_name, messages_dict, payload.chat_id, sources=sources_metadata, background_tasks=background_tasks, user_prompt=clean_user_prompt, original_messages=original_messages),
             media_type="text/event-stream"
         )
     elif not is_local:
@@ -1420,15 +1428,122 @@ Please answer the user query, taking into account any relevant project context o
         if not api_key:
             raise HTTPException(status_code=400, detail="OpenRouter API Key not set. Update settings first.")
         return StreamingResponse(
-            stream_openrouter(api_key, model_name, messages_dict, payload.chat_id, sources=sources_metadata, background_tasks=background_tasks, user_prompt=clean_user_prompt),
+            stream_openrouter(api_key, model_name, messages_dict, payload.chat_id, sources=sources_metadata, background_tasks=background_tasks, user_prompt=clean_user_prompt, original_messages=original_messages),
             media_type="text/event-stream"
         )
     else:
         return StreamingResponse(
-            stream_ollama(model_name, messages_dict, payload.chat_id, sources=sources_metadata, background_tasks=background_tasks, user_prompt=clean_user_prompt),
+            stream_ollama(model_name, messages_dict, payload.chat_id, sources=sources_metadata, background_tasks=background_tasks, user_prompt=clean_user_prompt, original_messages=original_messages),
             media_type="text/event-stream"
         )
+
+# Deep Research Endpoints
+class ResearchStartPayload(BaseModel):
+    query: str
+    model: str
+    max_rounds: Optional[int] = 3
+
+@app.post("/api/research/start")
+async def start_research(payload: ResearchStartPayload, background_tasks: BackgroundTasks):
+    session_id = str(uuid.uuid4())
+    config = load_settings()
+    
+    # Check that settings exist (api keys, etc)
+    if "gemini" in payload.model.lower() and not config.get("gemini_api_key"):
+        raise HTTPException(status_code=400, detail="Gemini API Key is missing. Update settings first.")
+    if ("openrouter" in payload.model.lower() or "/" in payload.model) and "gemini" not in payload.model.lower() and not config.get("openrouter_api_key"):
+        raise HTTPException(status_code=400, detail="OpenRouter API Key is missing. Update settings first.")
+
+    # Start deep research as a background task
+    background_tasks.add_task(
+        run_deep_research_task,
+        session_id,
+        payload.query,
+        payload.model,
+        payload.max_rounds,
+        config
+    )
+    
+    return {
+        "session_id": session_id,
+        "query": payload.query,
+        "model": payload.model,
+        "max_rounds": payload.max_rounds,
+        "status": "running"
+    }
+
+@app.get("/api/research/status/{session_id}")
+async def get_research_status(session_id: str):
+    if session_id not in _sessions_registry:
+        # Load from disk db in case it's archived/historical
+        db = load_research_sessions()
+        sessions = db.get("sessions", {})
+        if session_id in sessions:
+            return sessions[session_id]
+        raise HTTPException(status_code=404, detail="Research session not found")
+    
+    return _sessions_registry[session_id]
+
+@app.post("/api/research/cancel/{session_id}")
+async def cancel_research(session_id: str):
+    if session_id not in _sessions_registry:
+        raise HTTPException(status_code=404, detail="Research session not active or found")
+    
+    _sessions_registry[session_id]["status"] = "cancelled"
+    # Update on disk
+    db = load_research_sessions()
+    db["sessions"] = _sessions_registry
+    save_research_sessions(db)
+    
+    return {"session_id": session_id, "status": "cancelled"}
+
+@app.get("/api/research/sessions")
+async def list_research_sessions():
+    db = load_research_sessions()
+    sessions_list = list(db.get("sessions", {}).values())
+    # Sort by started_at descending
+    sessions_list.sort(key=lambda s: s.get("started_at", 0), reverse=True)
+    
+    # Strip heavy logs/report for list overview to save bytes
+    overview = []
+    for s in sessions_list:
+        overview.append({
+            "id": s.get("id"),
+            "query": s.get("query"),
+            "model_name": s.get("model_name"),
+            "max_rounds": s.get("max_rounds"),
+            "current_round": s.get("current_round"),
+            "status": s.get("status"),
+            "started_at": s.get("started_at"),
+            "completed_at": s.get("completed_at"),
+            "sources_count": len(s.get("sources", []))
+        })
+    return overview
+
+@app.get("/api/research/session/{session_id}")
+async def get_research_session(session_id: str):
+    db = load_research_sessions()
+    sessions = db.get("sessions", {})
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Research session not found")
+    return sessions[session_id]
+
+@app.delete("/api/research/session/{session_id}")
+async def delete_research_session(session_id: str):
+    db = load_research_sessions()
+    sessions = db.get("sessions", {})
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Research session not found")
+    
+    del sessions[session_id]
+    if session_id in _sessions_registry:
+        del _sessions_registry[session_id]
+        
+    db["sessions"] = sessions
+    save_research_sessions(db)
+    return {"session_id": session_id, "status": "deleted"}
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
