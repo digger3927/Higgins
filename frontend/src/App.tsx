@@ -20,7 +20,8 @@ import {
   Folder,
   FolderOpen,
   ArrowUp,
-  Brain
+  Brain,
+  Edit2
 } from 'lucide-react';
 import { marked } from 'marked';
 import './App.css';
@@ -834,6 +835,16 @@ function App() {
               onClick={(e) => handleTogglePin(chat.id, e)}
             >
               <Pin size={12} style={{ transform: chat.is_pinned ? 'rotate(45deg)' : 'none' }} />
+            </button>
+            <button 
+              className="chat-action-btn"
+              title="Rename Chat"
+              onClick={(e) => {
+                e.stopPropagation();
+                startRename(chat.id, chat.title, e);
+              }}
+            >
+              <Edit2 size={12} />
             </button>
             <button 
               className="chat-action-btn"
