@@ -76,6 +76,7 @@ interface SettingsConfig {
   google_api_key?: string;
   google_cx?: string;
   serper_api_key?: string;
+  searxng_url?: string;
   brain_directory?: string;
 }
 
@@ -673,6 +674,7 @@ function App() {
   const [googleKeyInput, setGoogleKeyInput] = useState('');
   const [googleCxInput, setGoogleCxInput] = useState('');
   const [serperKeyInput, setSerperKeyInput] = useState('');
+  const [searxngUrlInput, setSearxngUrlInput] = useState('http://127.0.0.1:8888');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
@@ -727,6 +729,7 @@ function App() {
         setGoogleKeyInput(data.google_api_key || '');
         setGoogleCxInput(data.google_cx || '');
         setSerperKeyInput(data.serper_api_key || '');
+        setSearxngUrlInput(data.searxng_url || 'http://127.0.0.1:8888');
         setBrainDirectoryInput(data.brain_directory || '');
         
         if (data.preferred_model && !activeChatId) {
@@ -1309,6 +1312,7 @@ function App() {
           google_api_key: googleKeyInput,
           google_cx: googleCxInput,
           serper_api_key: serperKeyInput,
+          searxng_url: searxngUrlInput,
           brain_directory: brainDirectoryInput
         }),
       });
@@ -3098,6 +3102,7 @@ function App() {
                       <option value="brave">Brave Search API</option>
                       <option value="google">Google Custom Search API</option>
                       <option value="serper">Serper API</option>
+                      <option value="searxng">SearXNG (Local)</option>
                     </select>
                   </div>
 
@@ -3177,6 +3182,22 @@ function App() {
                       />
                       <span className="form-hint">
                         Google Search scraping engine. Get a key at serper.dev.
+                      </span>
+                    </div>
+                  )}
+
+                  {searchProviderInput === 'searxng' && (
+                    <div className="form-group" style={{ marginTop: '16px' }}>
+                      <label className="form-label">SearXNG URL</label>
+                      <input
+                        type="text"
+                        className="form-input"
+                        placeholder="http://127.0.0.1:8888"
+                        value={searxngUrlInput}
+                        onChange={e => setSearxngUrlInput(e.target.value)}
+                      />
+                      <span className="form-hint">
+                        URL for your local or self-hosted SearXNG instance.
                       </span>
                     </div>
                   )}

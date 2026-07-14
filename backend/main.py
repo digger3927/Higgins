@@ -58,6 +58,7 @@ class Settings(BaseModel):
     google_api_key: Optional[str] = None
     google_cx: Optional[str] = None
     serper_api_key: Optional[str] = None
+    searxng_url: Optional[str] = None
     # Local Brain Directory
     brain_directory: Optional[str] = None
     # Active Project Path
@@ -95,6 +96,7 @@ def load_settings() -> Dict[str, Any]:
         "google_api_key": os.getenv("GOOGLE_API_KEY", ""),
         "google_cx": os.getenv("GOOGLE_CX", ""),
         "serper_api_key": os.getenv("SERPER_API_KEY", ""),
+        "searxng_url": os.getenv("SEARXNG_URL", "http://127.0.0.1:8888"),
         "brain_directory": "",
         "active_project_path": ""
     }
@@ -184,6 +186,8 @@ async def update_settings(settings: Settings):
         current["google_cx"] = settings.google_cx
     if settings.serper_api_key is not None:
         current["serper_api_key"] = settings.serper_api_key
+    if settings.searxng_url is not None:
+        current["searxng_url"] = settings.searxng_url
         
     # Brain Settings
     if settings.brain_directory is not None:
@@ -687,6 +691,27 @@ async def search_serper(query: str, api_key: str) -> List[Dict[str, str]]:
         logger.error(f"Serper API error: {e}")
     return results
 
+async def search_searxng(query: str, url: str) -> List[Dict[str, str]]:
+    results = []
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(
+                f"{url.rstrip('/')}/search",
+                params={"q": query, "format": "json"},
+                timeout=8.0
+            )
+            if res.status_code == 200:
+                data = res.json()
+                for item in data.get("results", [])[:5]:
+                    results.append({
+                        "title": item.get("title", ""),
+                        "url": item.get("url", ""),
+                        "snippet": item.get("content", "")
+                    })
+    except Exception as e:
+        logger.error(f"SearXNG API error: {e}")
+    return results
+
 async def perform_web_search(query: str, config: Dict[str, Any]) -> Tuple[str, List[Dict[str, str]]]:
     provider = config.get("search_provider", "duckduckgo")
     logger.info(f"Triggering web search query: '{query}' via provider: {provider}")
@@ -711,6 +736,9 @@ async def perform_web_search(query: str, config: Dict[str, Any]) -> Tuple[str, L
         key = config.get("serper_api_key")
         if key:
             results = await search_serper(query, key)
+    elif provider == "searxng":
+        url = config.get("searxng_url", "http://127.0.0.1:8888")
+        results = await search_searxng(query, url)
             
     if not results:
         logger.warning(f"No search results fetched for query '{query}' from provider {provider}")
