@@ -43,7 +43,7 @@ Higgins doesn't play favorites. Connect to the model that suits the task:
 Switch models mid-conversation from the sidebar. Higgins adapts.
 
 ### 🌐 Web Search
-Real-time web search baked directly into conversations. Higgins will search the web, synthesize results, and cite his sources — collapsible at the bottom of each reply so they don't clutter the conversation. Supports **DuckDuckGo** (default, no key needed), **Tavily**, **Brave**, **Google**, and **Serper**.
+Real-time web search baked directly into conversations. Higgins will search the web, synthesize results, and cite his sources — collapsible at the bottom of each reply so they don't clutter the conversation. Supports **DuckDuckGo** (default, no key needed), **Tavily**, **Brave**, **Google**, **Serper**, and **SearXNG** (local instance).
 
 ### 🧠 Local Brain (RAG)
 Point Higgins at a folder of your documents and he'll index them into a local vector store. When you ask questions, he automatically retrieves relevant context from your personal knowledge base. Your documents never leave your machine.
@@ -157,7 +157,7 @@ All settings are managed through the **Settings** panel in the UI. No `.env` fil
 | **Gemini API Key** | For Google Gemini models |
 | **OpenRouter API Key** | For OpenRouter model catalog |
 | **Ollama** | Auto-detected if running locally |
-| **Search Provider** | DuckDuckGo (default), Tavily, Brave, Google, Serper |
+| **Search Provider** | DuckDuckGo (default), Tavily, Brave, Google, Serper, SearXNG |
 | **Local Brain Directory** | Folder of documents to index for RAG |
 | **Memory & Prefs** | View, add, and manage stored memories |
 
@@ -170,7 +170,7 @@ All settings are managed through the **Settings** panel in the UI. No `.env` fil
 | **Frontend** | React 19, TypeScript, Vite, Lucide Icons |
 | **Backend** | Python, FastAPI, Uvicorn |
 | **LLM APIs** | Google Gemini, OpenRouter, Ollama |
-| **Search** | DuckDuckGo, Tavily, Brave, Google, Serper |
+| **Search** | DuckDuckGo, Tavily, Brave, Google, Serper, SearXNG |
 | **Styling** | Custom CSS with glass-morphism design system |
 
 ---
