@@ -5,7 +5,15 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # Activate the virtual environment
-source "$DIR/venv/bin/activate"
+if [ -f "$DIR/local/py3/bin/activate" ]; then
+  source "$DIR/local/py3/bin/activate"
+elif [ -f "$DIR/venv/bin/activate" ]; then
+  source "$DIR/venv/bin/activate"
+else
+  echo "Error: Virtual environment not found. Please run 'make install' first."
+  exit 1
+fi
+
 
 # Set a random secret key for the local instance if you want to modify settings
 export SEARXNG_SECRET="$(openssl rand -hex 32)"

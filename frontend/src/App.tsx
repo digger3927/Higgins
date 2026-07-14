@@ -80,6 +80,8 @@ interface SettingsConfig {
   brain_directory?: string;
 }
 
+const API_BASE = '';
+
 const AVAILABLE_MODELS = [
   // Gemini Models
   { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'google' },
@@ -715,7 +717,7 @@ function App() {
 
   const fetchSettings = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/settings');
+      const res = await fetch(`${API_BASE}/api/settings`);
       if (res.ok) {
         const data = await res.json();
         setSettings(data);
@@ -743,7 +745,7 @@ function App() {
 
   const fetchBrainStatus = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/brain/status');
+      const res = await fetch(`${API_BASE}/api/brain/status`);
       if (res.ok) {
         const data = await res.json();
         setBrainStatus(data);
@@ -760,7 +762,7 @@ function App() {
     setIsIndexing(true);
     setIndexingMessage('Scanning and chunking files...');
     try {
-      const res = await fetch('http://localhost:8000/api/brain/index', {
+      const res = await fetch(`${API_BASE}/api/brain/index`, {
         method: 'POST'
       });
       const data = await res.json();
@@ -785,7 +787,7 @@ function App() {
 
   const fetchPickerDirectory = async (path: string) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/browse?path=${encodeURIComponent(path)}`);
+      const res = await fetch(`${API_BASE}/api/browse?path=${encodeURIComponent(path)}`);
       const data = await res.json();
       if (res.ok) {
         setPickerCurrentPath(data.current_path);
@@ -803,7 +805,7 @@ function App() {
   const fetchCatalog = async () => {
     setIsCatalogLoading(true);
     try {
-      const res = await fetch('http://localhost:8000/api/openrouter-catalog');
+      const res = await fetch(`${API_BASE}/api/openrouter-catalog`);
       if (res.ok) {
         const data = await res.json();
         setOpenRouterCatalog(data);
@@ -824,7 +826,7 @@ function App() {
 
   const fetchMemories = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/memory');
+      const res = await fetch(`${API_BASE}/api/memory`);
       if (res.ok) {
         const data = await res.json();
         setMemories(data);
@@ -839,7 +841,7 @@ function App() {
     if (!newMemoryInput.trim()) return;
     setIsAddingMemory(true);
     try {
-      const res = await fetch('http://localhost:8000/api/memory', {
+      const res = await fetch(`${API_BASE}/api/memory`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -859,7 +861,7 @@ function App() {
 
   const handleDeleteMemory = async (id: string) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/memory/${id}`, {
+      const res = await fetch(`${API_BASE}/api/memory/${id}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -878,7 +880,7 @@ function App() {
 
   const fetchProjectStatus = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/project/status');
+      const res = await fetch(`${API_BASE}/api/project/status`);
       if (res.ok) {
         const data = await res.json();
         setActiveProjectPath(data.active_project_path);
@@ -893,7 +895,7 @@ function App() {
 
   const fetchProjects = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/projects');
+      const res = await fetch(`${API_BASE}/api/projects`);
       if (res.ok) {
         const data = await res.json();
         setProjectHistory(data.projects || []);
@@ -906,7 +908,7 @@ function App() {
   const handleRemoveProject = async (path: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      const res = await fetch(`http://localhost:8000/api/projects?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
+      const res = await fetch(`${API_BASE}/api/projects?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
       if (res.ok) {
         await fetchProjects();
         if (activeProjectPath === path) {
@@ -925,7 +927,7 @@ function App() {
 
   const handleSelectProjectFolder = async (path: string) => {
     try {
-      const res = await fetch('http://localhost:8000/api/project/select', {
+      const res = await fetch(`${API_BASE}/api/project/select`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path })
@@ -950,7 +952,7 @@ function App() {
     if (!editingFilePath) return;
     setIsSavingFile(true);
     try {
-      const res = await fetch('http://localhost:8000/api/project/file', {
+      const res = await fetch(`${API_BASE}/api/project/file`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path: editingFilePath, content: editingFileContent })
@@ -969,7 +971,7 @@ function App() {
 
   const fetchModels = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/models');
+      const res = await fetch(`${API_BASE}/api/models`);
       if (res.ok) {
         const data = await res.json();
         setModels(data);
@@ -982,7 +984,7 @@ function App() {
   // Deep Research API & Helper Functions
   const fetchResearchSessions = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/research/sessions');
+      const res = await fetch(`${API_BASE}/api/research/sessions`);
       if (res.ok) {
         const data = await res.json();
         setResearchSessions(data);
@@ -1005,7 +1007,7 @@ function App() {
     }
 
     try {
-      const res = await fetch('http://localhost:8000/api/research/start', {
+      const res = await fetch(`${API_BASE}/api/research/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1038,7 +1040,7 @@ function App() {
 
   const pollResearchStatus = async (sessionId: string) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/research/status/${sessionId}`);
+      const res = await fetch(`${API_BASE}/api/research/status/${sessionId}`);
       if (res.ok) {
         const data: ResearchSessionFull = await res.json();
         setSelectedResearchSession(data);
@@ -1064,7 +1066,7 @@ function App() {
     if (!sessionId) return;
     
     try {
-      const res = await fetch(`http://localhost:8000/api/research/cancel/${sessionId}`, {
+      const res = await fetch(`${API_BASE}/api/research/cancel/${sessionId}`, {
         method: 'POST'
       });
       if (res.ok) {
@@ -1101,7 +1103,7 @@ function App() {
     setActiveResearchSessionId(null);
 
     try {
-      const res = await fetch(`http://localhost:8000/api/research/session/${sessionId}`);
+      const res = await fetch(`${API_BASE}/api/research/session/${sessionId}`);
       if (res.ok) {
         const data = await res.json();
         setSelectedResearchSession(data);
@@ -1127,7 +1129,7 @@ function App() {
     if (!confirm('Are you sure you want to delete this research session?')) return;
     
     try {
-      const res = await fetch(`http://localhost:8000/api/research/session/${sessionId}`, {
+      const res = await fetch(`${API_BASE}/api/research/session/${sessionId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -1176,7 +1178,7 @@ function App() {
   // Document Editor Helper Functions
   const openDocument = async (filePath: string) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/project/file?path=${encodeURIComponent(filePath)}`);
+      const res = await fetch(`${API_BASE}/api/project/file?path=${encodeURIComponent(filePath)}`);
       if (res.ok) {
         const data = await res.json();
         setActiveDocPath(data.path);
@@ -1199,7 +1201,7 @@ function App() {
     if (!activeDocPath) return;
     const contentToSave = customContent !== undefined ? customContent : activeDocContent;
     try {
-      const res = await fetch('http://localhost:8000/api/project/file', {
+      const res = await fetch(`${API_BASE}/api/project/file`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1228,7 +1230,7 @@ function App() {
     const finalFilename = hasValidExt ? filename : `${filename}.txt`;
     
     try {
-      const res = await fetch('http://localhost:8000/api/project/file', {
+      const res = await fetch(`${API_BASE}/api/project/file`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1245,7 +1247,7 @@ function App() {
   };
   const fetchChats = async (selectNewest: boolean = true) => {
     try {
-      const res = await fetch('http://localhost:8000/api/chats');
+      const res = await fetch(`${API_BASE}/api/chats`);
       if (res.ok) {
         const data: ChatSession[] = await res.json();
         setChats(data);
@@ -1273,7 +1275,7 @@ function App() {
 
   const handleCreateNewChat = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/chats', {
+      const res = await fetch(`${API_BASE}/api/chats`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1296,7 +1298,7 @@ function App() {
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://localhost:8000/api/settings', {
+      const res = await fetch(`${API_BASE}/api/settings`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1337,7 +1339,7 @@ function App() {
     // If we have an active chat, update its model
     if (activeChatId) {
       try {
-        await fetch(`http://localhost:8000/api/chats/${activeChatId}`, {
+        await fetch(`${API_BASE}/api/chats/${activeChatId}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -1359,7 +1361,7 @@ function App() {
     if (!chat) return;
 
     try {
-      const res = await fetch(`http://localhost:8000/api/chats/${chatId}`, {
+      const res = await fetch(`${API_BASE}/api/chats/${chatId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1384,7 +1386,7 @@ function App() {
     if (!chat) return;
 
     try {
-      const res = await fetch(`http://localhost:8000/api/chats/${chatId}`, {
+      const res = await fetch(`${API_BASE}/api/chats/${chatId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1411,7 +1413,7 @@ function App() {
     if (!confirm('Are you sure you want to delete this chat permanently?')) return;
 
     try {
-      const res = await fetch(`http://localhost:8000/api/chats/${chatId}`, {
+      const res = await fetch(`${API_BASE}/api/chats/${chatId}`, {
         method: 'DELETE'
       });
       if (res.ok) {
@@ -1438,7 +1440,7 @@ function App() {
     }
     
     try {
-      const res = await fetch(`http://localhost:8000/api/chats/${chatId}`, {
+      const res = await fetch(`${API_BASE}/api/chats/${chatId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1476,7 +1478,7 @@ function App() {
     // If no chat is active, auto-create a new chat session first
     if (!targetChatId) {
       try {
-        const res = await fetch('http://localhost:8000/api/chats', {
+        const res = await fetch(`${API_BASE}/api/chats`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -1533,7 +1535,7 @@ function App() {
     abortControllerRef.current = controller;
 
     try {
-      const response = await fetch('http://localhost:8000/api/chat', {
+      const response = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -112,6 +112,11 @@ cd ..
 cd frontend
 npm install
 cd ..
+
+# Set up SearXNG
+cd searxng
+make install
+cd ..
 ```
 
 ### Run
@@ -142,6 +147,7 @@ Higgins/
 │   │   └── App.css          # Glass-morphism design system
 │   └── public/
 │       └── Higgins.png      # The man himself
+├── searxng/                 # Local SearXNG instance
 ├── start.sh                 # Single launcher script
 └── README.md                # You are here
 ```
