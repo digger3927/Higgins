@@ -540,7 +540,7 @@ function App() {
     model_name: string;
     max_rounds: number;
     current_round: number;
-    status: 'running' | 'done' | 'failed' | 'cancelled';
+    status: 'running' | 'completed' | 'failed' | 'cancelled';
     started_at: number;
     completed_at: number | null;
     sources_count: number;
@@ -559,7 +559,7 @@ function App() {
     model_name: string;
     max_rounds: number;
     current_round: number;
-    status: 'running' | 'done' | 'failed' | 'cancelled';
+    status: 'running' | 'completed' | 'failed' | 'cancelled';
     logs: ResearchLogEvent[];
     sources: { title: string; url: string; snippet?: string }[];
     evolving_report: string;
@@ -1045,7 +1045,7 @@ function App() {
         const data: ResearchSessionFull = await res.json();
         setSelectedResearchSession(data);
         
-        if (data.status === 'done' || data.status === 'failed' || data.status === 'cancelled') {
+        if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
           // Finished! Stop polling
           if (pollingIntervalRef.current) {
             clearInterval(pollingIntervalRef.current);
@@ -1837,7 +1837,7 @@ function App() {
           <div className="report-viewer-panel">
             <div className="report-header-actions">
               <div>
-                <span className="api-status-pill" style={{ textTransform: 'uppercase', fontSize: '11px', background: session.status === 'done' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: session.status === 'done' ? 'var(--accent-green)' : 'var(--accent-red)', border: `1px solid ${session.status === 'done' ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`, padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
+                <span className="api-status-pill" style={{ textTransform: 'uppercase', fontSize: '11px', background: session.status === 'completed' ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)', color: session.status === 'completed' ? 'var(--accent-green)' : 'var(--accent-red)', border: `1px solid ${session.status === 'completed' ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`, padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
                   {session.status}
                 </span>
               </div>

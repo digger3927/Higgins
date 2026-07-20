@@ -2,12 +2,12 @@ import os
 import markdown
 from typing import Dict, Any
 
-def render_html(synthesis_markdown: str, findings: list, output_path: str = "report.html") -> str:
+def render_html(synthesis_html: str, findings: list, output_path: str = "report.html") -> str:
     """
     Renders the research synthesis and raw findings into a beautifully styled HTML document.
     """
-    # Convert markdown to HTML
-    html_content = markdown.markdown(synthesis_markdown, extensions=['tables', 'fenced_code'])
+    # Synthesis is already HTML
+    html_content = synthesis_html
     
     # Generate findings timeline/table section
     findings_html = "<h2>Research Timeline & Sources</h2><ul>"

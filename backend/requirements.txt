@@ -3,5 +3,5 @@ uvicorn>=0.22.0
 google-generativeai>=0.3.0
 httpx>=0.24.0
 python-dotenv>=1.0.0
-duckduckgo-search>=8.1.1
+ddgs>=9.14.0
 beautifulsoup4>=4.12.0

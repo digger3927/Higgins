@@ -587,7 +587,7 @@ def process_project_file_actions(text: str):
 async def search_duckduckgo(query: str) -> List[Dict[str, str]]:
     results = []
     try:
-        from duckduckgo_search import DDGS
+        from ddgs import DDGS
         with DDGS() as ddgs:
             # We run in a threadpool to prevent blocking the async event loop
             loop = asyncio.get_event_loop()
@@ -712,6 +712,25 @@ async def search_searxng(query: str, url: str) -> List[Dict[str, str]]:
         logger.error(f"SearXNG API error: {e}")
     return results
 
+async def scrape_url(url: str) -> str:
+    try:
+        import httpx
+        from bs4 import BeautifulSoup
+        import asyncio
+        async with httpx.AsyncClient(verify=False, timeout=5.0) as client:
+            response = await client.get(url, follow_redirects=True)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, 'html.parser')
+            for script in soup(["script", "style", "nav", "footer", "header"]):
+                script.extract()
+            text = soup.get_text(separator=' ')
+            lines = (line.strip() for line in text.splitlines())
+            chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
+            text = '\n'.join(chunk for chunk in chunks if chunk)
+            return text[:4000]
+    except Exception:
+        return ""
+
 async def perform_web_search(query: str, config: Dict[str, Any]) -> Tuple[str, List[Dict[str, str]]]:
     provider = config.get("search_provider", "duckduckgo")
     logger.info(f"Triggering web search query: '{query}' via provider: {provider}")
@@ -745,8 +764,21 @@ async def perform_web_search(query: str, config: Dict[str, Any]) -> Tuple[str, L
         return "No search results found or provider connection failed.", []
         
     formatted = []
+    import asyncio
+    
+    # Scrape top 3 results concurrently for deeper context
+    top_results = results[:3]
+    scrape_tasks = [scrape_url(r.get('url', '')) for r in top_results]
+    scraped_texts = await asyncio.gather(*scrape_tasks, return_exceptions=True)
+    
     for idx, r in enumerate(results, 1):
-        formatted.append(f"[{idx}] Title: {r.get('title')}\nSource: {r.get('url')}\nSnippet: {r.get('snippet')}\n")
+        content = r.get('snippet', '')
+        if idx <= len(top_results):
+            scraped = scraped_texts[idx-1]
+            if isinstance(scraped, str) and len(scraped) > 100:
+                content = f"{content}\n\nFull Extracted Page Text:\n{scraped}"
+                
+        formatted.append(f"[{idx}] Title: {r.get('title')}\nSource: {r.get('url')}\nContent:\n{content}\n")
     return "\n".join(formatted), results
 
 # LLM streaming helper generators
@@ -1403,7 +1435,7 @@ Always keep GEMINI.MD updated with goals, timeline notes, and files you create.
 {brain_context}
 
 User Query: {last_user_message["content"]}
-Please construct your answer using both the Web Search Context and the Local Brain Context chunks above. DO NOT include a list of source links or reference indices (like [1], [2], etc.) in your final response. The user interface displays sources separately. Write your reply cleanly."""
+Please construct your answer using both the Web Search Context and the Local Brain Context chunks above. You MUST deeply synthesize, consolidate, and interpret the data from the search context rather than simply listing or referencing the links. Provide a comprehensive, well-reasoned answer. If the context does not contain the complete answer, explain what you found in the context. Under no circumstances should you mention your knowledge cutoff date or apologize for being an AI. DO NOT include a list of source links or reference indices (like [1], [2], etc.) in your final response. The user interface displays sources separately. Write your reply cleanly."""
                 messages_dict[-1]["content"] = combined_prompt
                 logger.info("Hybrid Search & RAG context successfully injected into LLM payload.")
             elif payload.web_search_enabled:
@@ -1414,7 +1446,7 @@ Please construct your answer using both the Web Search Context and the Local Bra
 {search_context}
 
 User Query: {last_user_message["content"]}
-Please construct your answer using the search context above. DO NOT include a list of source links, URLs, or reference indices (like [1], [2]) at the end of your response. The interface displays sources separately. Write your reply cleanly."""
+Please construct your answer using the search context above. You MUST deeply synthesize, consolidate, and interpret the data from the search context rather than simply listing or referencing the links. Provide a comprehensive, well-reasoned answer. If the context does not contain the complete answer, explain what you found in the context. Under no circumstances should you mention your knowledge cutoff date or apologize for being an AI. DO NOT include a list of source links, URLs, or reference indices (like [1], [2]) at the end of your response. The interface displays sources separately. Write your reply cleanly."""
                 messages_dict[-1]["content"] = context_prompt
                 logger.info("Search context successfully injected into LLM payload.")
             elif payload.local_brain_enabled:
@@ -1422,7 +1454,7 @@ Please construct your answer using the search context above. DO NOT include a li
 {brain_context}
 
 User Query: {last_user_message["content"]}
-Please construct your answer using the Local Brain Context chunks above. DO NOT include raw source lists or reference indices (like [1], [2]) in your final response. The interface displays sources separately. Write your reply cleanly."""
+Please construct your answer using the Local Brain Context chunks above. If the context contains relevant information, use it to answer the user. If the context does not contain the complete answer, explain what you found in the context. Under no circumstances should you mention your knowledge cutoff date or apologize for being an AI. DO NOT include raw source lists or reference indices (like [1], [2]) in your final response. The interface displays sources separately. Write your reply cleanly."""
                 messages_dict[-1]["content"] = context_prompt
                 logger.info("Local Brain context successfully injected into LLM payload.")
             elif context_prefix:

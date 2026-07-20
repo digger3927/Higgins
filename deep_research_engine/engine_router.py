@@ -19,8 +19,8 @@ class SearchEngine:
         try:
             from duckduckgo_search import DDGS
             with DDGS() as ddgs:
-                # Pull the top 5 results to increase detail
-                for r in ddgs.text(query, max_results=5):
+                # Pull the top 10 results to increase detail and coverage
+                for r in ddgs.text(query, max_results=10):
                     results.append({"title": r.get("title", ""), "url": r.get("href", ""), "snippet": r.get("body", "")})
         except Exception as e:
             print(f"[SearchEngine] DDGS error: {e}")
@@ -51,8 +51,8 @@ class SearchEngine:
                 response = requests.get(url, timeout=10)
                 response.raise_for_status()
                 soup = BeautifulSoup(response.text, 'html.parser')
-                # Set text limit to 10000 characters for more detail while fitting 5 links
-                return soup.get_text(separator=' ', strip=True)[:10000]
+                # Set text limit to 40000 characters for deep extraction
+                return soup.get_text(separator=' ', strip=True)[:40000]
             except requests.RequestException as e:
                 print(f"[SearchEngine] Network error fetching {url}: {e}")
                 return ""
