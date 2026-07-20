@@ -1435,7 +1435,7 @@ Always keep GEMINI.MD updated with goals, timeline notes, and files you create.
 {brain_context}
 
 User Query: {last_user_message["content"]}
-Please construct your answer using both the Web Search Context and the Local Brain Context chunks above. You MUST deeply synthesize, consolidate, and interpret the data from the search context rather than simply listing or referencing the links. Provide a comprehensive, well-reasoned answer. If the context does not contain the complete answer, explain what you found in the context. Under no circumstances should you mention your knowledge cutoff date or apologize for being an AI. DO NOT include a list of source links or reference indices (like [1], [2], etc.) in your final response. The user interface displays sources separately. Write your reply cleanly."""
+You MUST deeply synthesize, consolidate, and interpret the data from the context chunks above to provide a comprehensive, well-reasoned answer. Do not mention that you performed a search, consulted context, or found information in the context. Answer directly and confidently as if you possess this knowledge inherently. Under no circumstances should you mention your knowledge cutoff date or apologize for being an AI. DO NOT include a list of source links or reference indices (like [1], [2], etc.) in your final response. The user interface displays sources separately. Write your reply cleanly."""
                 messages_dict[-1]["content"] = combined_prompt
                 logger.info("Hybrid Search & RAG context successfully injected into LLM payload.")
             elif payload.web_search_enabled:
@@ -1446,7 +1446,7 @@ Please construct your answer using both the Web Search Context and the Local Bra
 {search_context}
 
 User Query: {last_user_message["content"]}
-Please construct your answer using the search context above. You MUST deeply synthesize, consolidate, and interpret the data from the search context rather than simply listing or referencing the links. Provide a comprehensive, well-reasoned answer. If the context does not contain the complete answer, explain what you found in the context. Under no circumstances should you mention your knowledge cutoff date or apologize for being an AI. DO NOT include a list of source links, URLs, or reference indices (like [1], [2]) at the end of your response. The interface displays sources separately. Write your reply cleanly."""
+You MUST deeply synthesize, consolidate, and interpret the data from the search context above to provide a comprehensive, well-reasoned answer. Do not mention that you performed a search, consulted context, or found information in the context. Answer directly and confidently as if you possess this knowledge inherently. Under no circumstances should you mention your knowledge cutoff date or apologize for being an AI. DO NOT include a list of source links, URLs, or reference indices (like [1], [2]) at the end of your response. The interface displays sources separately. Write your reply cleanly."""
                 messages_dict[-1]["content"] = context_prompt
                 logger.info("Search context successfully injected into LLM payload.")
             elif payload.local_brain_enabled:
@@ -1454,7 +1454,7 @@ Please construct your answer using the search context above. You MUST deeply syn
 {brain_context}
 
 User Query: {last_user_message["content"]}
-Please construct your answer using the Local Brain Context chunks above. If the context contains relevant information, use it to answer the user. If the context does not contain the complete answer, explain what you found in the context. Under no circumstances should you mention your knowledge cutoff date or apologize for being an AI. DO NOT include raw source lists or reference indices (like [1], [2]) in your final response. The interface displays sources separately. Write your reply cleanly."""
+You MUST deeply synthesize, consolidate, and interpret the data from the Local Brain Context chunks above to provide a comprehensive, well-reasoned answer. Do not mention that you performed a search, consulted context, or found information in the context. Answer directly and confidently as if you possess this knowledge inherently. Under no circumstances should you mention your knowledge cutoff date or apologize for being an AI. DO NOT include raw source lists or reference indices (like [1], [2]) in your final response. The interface displays sources separately. Write your reply cleanly."""
                 messages_dict[-1]["content"] = context_prompt
                 logger.info("Local Brain context successfully injected into LLM payload.")
             elif context_prefix:
