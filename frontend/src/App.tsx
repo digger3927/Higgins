@@ -23,6 +23,7 @@ import {
   Search,
   FileText,
   Download,
+  Bot,
   Copy,
   Check,
   ChevronDown,
@@ -68,6 +69,7 @@ interface ChatSession {
 interface SettingsConfig {
   gemini_api_key: string;
   openrouter_api_key: string;
+  agent_security_level?: string;
   preferred_model: string;
   enabled_openrouter_models?: string[];
   search_provider?: string;
@@ -525,6 +527,7 @@ function App() {
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('google/gemini-2.5-flash');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState<any>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const pollingIntervalRef = useRef<any>(null);
   const [webSearchEnabled, setWebSearchEnabled] = useState(() => {
@@ -533,6 +536,7 @@ function App() {
   });
   const [localBrainEnabled, setLocalBrainEnabled] = useState(() => localStorage.getItem('localBrainEnabled') === 'true');
   const [previousChatsContextEnabled, setPreviousChatsContextEnabled] = useState(() => localStorage.getItem('previousChatsContextEnabled') === 'true');
+  const [agentModeEnabled, setAgentModeEnabled] = useState(() => localStorage.getItem('agentModeEnabled') === 'true');
   const [expandedSources, setExpandedSources] = useState<Record<number, boolean>>({});
   
   // Deep Research States
@@ -616,6 +620,7 @@ function App() {
   const [openrouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [brainDirectoryInput, setBrainDirectoryInput] = useState('');
   const [memoryModeInput, setMemoryModeInput] = useState('smart');
+  const [agentSecurityLevelInput, setAgentSecurityLevelInput] = useState('prompt_all');
   
   // Brain status & indexing states
   const [brainStatus, setBrainStatus] = useState<{
@@ -642,7 +647,7 @@ function App() {
   const [pickerError, setPickerError] = useState('');
 
   // Dynamic OpenRouter catalog state
-  const [activeSettingsTab, setActiveSettingsTab] = useState<'keys' | 'catalog' | 'search' | 'brain' | 'memory'>('keys');
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'keys' | 'agent' | 'catalog' | 'search' | 'brain' | 'memory'>('keys');
   
   // Memory management states
   interface MemoryItem {
@@ -737,6 +742,7 @@ function App() {
         setSearxngUrlInput(data.searxng_url || 'http://127.0.0.1:8888');
         setBrainDirectoryInput(data.brain_directory || '');
         setMemoryModeInput(data.memory_mode || 'smart');
+        setAgentSecurityLevelInput(data.agent_security_level || 'prompt_all');
         
         if (data.preferred_model && !activeChatId) {
           setSelectedModel(data.preferred_model);
@@ -1320,7 +1326,8 @@ function App() {
           serper_api_key: serperKeyInput,
           searxng_url: searxngUrlInput,
           brain_directory: brainDirectoryInput,
-          memory_mode: memoryModeInput
+          memory_mode: memoryModeInput,
+          agent_security_level: agentSecurityLevelInput
         }),
       });
 
@@ -1472,13 +1479,17 @@ function App() {
     }
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || isGenerating) return;
+  const handleSend = async (approvedTool: any = null) => {
+    if (!input.trim() && !approvedTool && !isGenerating) return;
+    if (isGenerating && !approvedTool) return;
 
     let targetChatId = activeChatId;
     let currentInput = input;
-    setInput('');
+    if (!approvedTool) {
+      setInput('');
+    }
     setIsGenerating(true);
+    setPendingApproval(null);
 
     // If no chat is active, auto-create a new chat session first
     if (!targetChatId) {
@@ -1510,20 +1521,24 @@ function App() {
       }
     }
 
-    const userMessage: Message = { role: 'user', content: currentInput };
     const targetChat = chats.find(c => c.id === targetChatId) || null;
-    const updatedMessages = [...(targetChat?.messages || []), userMessage];
+    let updatedMessages = [...(targetChat?.messages || [])];
     
-    // Optimistically update the UI chat history with user prompt
-    setChats(prev => prev.map(c => {
-      if (c.id === targetChatId) {
-        return {
-          ...c,
-          messages: [...c.messages, userMessage]
-        };
-      }
-      return c;
-    }));
+    if (!approvedTool) {
+      const userMessage: Message = { role: 'user', content: currentInput };
+      updatedMessages.push(userMessage);
+      
+      // Optimistically update the UI chat history with user prompt
+      setChats(prev => prev.map(c => {
+        if (c.id === targetChatId) {
+          return {
+            ...c,
+            messages: [...c.messages, userMessage]
+          };
+        }
+        return c;
+      }));
+    }
 
     // Add placeholder assistant message that we will stream into
     setChats(prev => prev.map(c => {
@@ -1551,7 +1566,9 @@ function App() {
           model: selectedModel,
           web_search_enabled: webSearchEnabled,
           local_brain_enabled: localBrainEnabled,
-          previous_chats_context_enabled: previousChatsContextEnabled
+          previous_chats_context_enabled: previousChatsContextEnabled,
+          agent_mode_enabled: agentModeEnabled,
+          approved_tool_call: approvedTool
         }),
         signal: controller.signal,
       });
@@ -1599,6 +1616,50 @@ function App() {
                   }
                   return c;
                 }));
+              } else if (data.type === 'agent_status') {
+                const msg = `\n> 🤖 **Status:** ${data.content}\n`;
+                setChats(prev => prev.map(c => {
+                  if (c.id === activeChatId) {
+                    const copyMessages = [...c.messages];
+                    const lastIdx = copyMessages.length - 1;
+                    copyMessages[lastIdx] = {
+                      ...copyMessages[lastIdx],
+                      content: copyMessages[lastIdx].content + msg
+                    };
+                    return { ...c, messages: copyMessages };
+                  }
+                  return c;
+                }));
+              } else if (data.type === 'tool_call') {
+                const msg = `\n> 🛠️ **Tool:** \`${data.tool}\`\n> \`\`\`\n> ${data.input.replace(/\\n/g, '\n> ')}\n> \`\`\`\n`;
+                setChats(prev => prev.map(c => {
+                  if (c.id === activeChatId) {
+                    const copyMessages = [...c.messages];
+                    const lastIdx = copyMessages.length - 1;
+                    copyMessages[lastIdx] = {
+                      ...copyMessages[lastIdx],
+                      content: copyMessages[lastIdx].content + msg
+                    };
+                    return { ...c, messages: copyMessages };
+                  }
+                  return c;
+                }));
+              } else if (data.type === 'tool_result') {
+                const msg = `\n<details><summary>Result</summary>\n\n\`\`\`\n${data.output}\n\`\`\`\n</details>\n`;
+                setChats(prev => prev.map(c => {
+                  if (c.id === activeChatId) {
+                    const copyMessages = [...c.messages];
+                    const lastIdx = copyMessages.length - 1;
+                    copyMessages[lastIdx] = {
+                      ...copyMessages[lastIdx],
+                      content: copyMessages[lastIdx].content + msg
+                    };
+                    return { ...c, messages: copyMessages };
+                  }
+                  return c;
+                }));
+              } else if (data.type === 'tool_approval_required') {
+                setPendingApproval(data);
               } else if (data.type === 'error') {
                 throw new Error(data.content);
               }
@@ -2641,6 +2702,25 @@ function App() {
           <div ref={messagesEndRef} />
         </div>
 
+        {pendingApproval && (
+          <div style={{ padding: '12px', background: 'var(--bg-glass)', border: '1px solid var(--accent-orange)', borderRadius: '8px', margin: '0 24px 12px 24px' }}>
+            <h4 style={{ margin: '0 0 8px 0', color: 'var(--accent-orange)', fontSize: '14px' }}>⚠️ Approval Required</h4>
+            <p style={{ margin: '0 0 8px 0', fontSize: '14px', color: 'var(--text-main)' }}>Higgins wants to execute <code>{pendingApproval.tool}</code>.</p>
+            <pre style={{ background: 'rgba(0,0,0,0.2)', padding: '8px', borderRadius: '4px', fontSize: '12px', margin: '0 0 12px 0', whiteSpace: 'pre-wrap', color: 'var(--text-muted)' }}>{pendingApproval.input}</pre>
+            <p style={{ margin: '0 0 8px 0', fontSize: '12px', color: 'var(--text-muted)' }}>This action was paused by your Security Level settings. Click Approve to execute it and continue the task.</p>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button 
+                style={{ padding: '6px 12px', background: 'var(--accent-green)', border: 'none', borderRadius: '4px', color: 'white', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+                onClick={() => handleSend(pendingApproval)}
+              >Approve</button>
+              <button 
+                style={{ padding: '6px 12px', background: 'var(--bg-glass)', border: '1px solid var(--border-glass)', borderRadius: '4px', color: 'var(--text-main)', cursor: 'pointer', fontSize: '12px' }}
+                onClick={() => setPendingApproval(null)}
+              >Dismiss</button>
+            </div>
+          </div>
+        )}
+
         {/* Input Panel */}
         <div className="chat-input-container">
           <div className="input-box-wrapper glass-panel">
@@ -2777,6 +2857,35 @@ function App() {
                 >
                   <History size={14} className={previousChatsContextEnabled ? 'pulse-icon-green' : ''} />
                   <span>Prev Chats</span>
+                </button>
+
+                <button
+                  type="button"
+                  className={`search-toggle-btn ${agentModeEnabled ? 'active-orange' : ''}`}
+                  title="Toggle Agent Mode"
+                  onClick={() => {
+                    const val = !agentModeEnabled;
+                    setAgentModeEnabled(val);
+                    localStorage.setItem('agentModeEnabled', String(val));
+                  }}
+                  disabled={!isKeyConfigured() || isGenerating}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: agentModeEnabled ? 'var(--accent-orange, #f97316)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    transition: 'var(--transition-smooth)'
+                  }}
+                >
+                  <Bot size={14} className={agentModeEnabled ? 'pulse-icon-orange' : ''} />
+                  <span>Agent Mode</span>
                 </button>
 
                 <span className="sidebar-divider-v" style={{ width: '1px', height: '12px', background: 'var(--border-glass)' }}></span>
@@ -3046,6 +3155,13 @@ function App() {
               </button>
               <button 
                 type="button"
+                className={`modal-tab-btn ${activeSettingsTab === 'agent' ? 'active' : ''}`}
+                onClick={() => setActiveSettingsTab('agent')}
+              >
+                Agent
+              </button>
+              <button 
+                type="button"
                 className={`modal-tab-btn ${activeSettingsTab === 'catalog' ? 'active' : ''}`}
                 onClick={() => setActiveSettingsTab('catalog')}
               >
@@ -3121,6 +3237,24 @@ function App() {
                      <span className="form-hint">
                        Used for OpenRouter models (e.g. Llama 3, Claude 3.5, DeepSeek).
                      </span>
+                  </div>
+                </div>
+              ) : activeSettingsTab === 'agent' ? (
+                <div style={{ flex: 1 }}>
+                  <div className="form-group">
+                    <label className="form-label">Agent Security Level</label>
+                    <select
+                      className="form-input"
+                      value={agentSecurityLevelInput}
+                      onChange={e => setAgentSecurityLevelInput(e.target.value)}
+                    >
+                      <option value="auto">Full Autonomy (Auto-Approve All)</option>
+                      <option value="safe">Safe Mode (Prompt for Mutating Actions)</option>
+                      <option value="prompt_all">Strict Mode (Prompt for Everything)</option>
+                    </select>
+                    <span className="form-hint">
+                      Controls how often Higgins asks for permission before running tools (like bash commands or writing files).
+                    </span>
                   </div>
                 </div>
               ) : activeSettingsTab === 'search' ? (

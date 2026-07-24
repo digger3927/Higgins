@@ -49,6 +49,7 @@ OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 class Settings(BaseModel):
     gemini_api_key: Optional[str] = None
     openrouter_api_key: Optional[str] = None
+    agent_security_level: Optional[str] = "prompt_all"
     preferred_model: Optional[str] = None
     enabled_openrouter_models: Optional[List[str]] = None
     # Search Engine Keys
@@ -80,6 +81,8 @@ class ChatPayload(BaseModel):
     web_search_enabled: Optional[bool] = False
     local_brain_enabled: Optional[bool] = False
     previous_chats_context_enabled: Optional[bool] = False
+    agent_mode_enabled: Optional[bool] = False
+    approved_tool_call: Optional[Dict[str, Any]] = None
 
 class ChatUpdatePayload(BaseModel):
     title: Optional[str] = None
@@ -94,6 +97,7 @@ def load_settings() -> Dict[str, Any]:
     default_config = {
         "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
         "openrouter_api_key": os.getenv("OPENROUTER_API_KEY", ""),
+        "agent_security_level": os.getenv("AGENT_SECURITY_LEVEL", "prompt_all"),
         "preferred_model": os.getenv("PREFERRED_MODEL", "google/gemini-2.5-flash"),
         "enabled_openrouter_models": [],
         "search_provider": "duckduckgo",
@@ -1352,6 +1356,20 @@ Instructions:
     except Exception as e:
         logger.error(f"Error in extract_memories_task background job: {e}")
 
+async def check_ollama_tool_support(model_name: str) -> bool:
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.post(f"{OLLAMA_HOST}/api/show", json={"name": model_name})
+            if res.status_code == 200:
+                data = res.json()
+                template = data.get("template", "")
+                if "Tools" in template or "tools" in template.lower() or "tool" in template.lower() or "function" in template.lower():
+                    return True
+    except Exception as e:
+        logger.error(f"Error checking ollama tool support: {e}")
+    return False
+
+
 @app.post("/api/chat")
 async def chat(payload: ChatPayload, background_tasks: BackgroundTasks):
     config = load_settings()
@@ -1547,6 +1565,21 @@ Please answer the user query, taking into account any relevant project context o
         pass
         
     is_local = model_name in local_models
+    
+    if payload.agent_mode_enabled:
+        if is_local:
+            supports_tools = await check_ollama_tool_support(model_name)
+            if not supports_tools:
+                async def err_stream():
+                    yield f"data: {json.dumps({'type': 'error', 'content': f'Model {model_name} does not support Agent Mode (tool calling) via Ollama. Please use a different model or disable Agent Mode.'})}\\n\\n"
+                return StreamingResponse(err_stream(), media_type="text/event-stream")
+                
+        api_key = config.get("gemini_api_key") if is_gemini_model else config.get("openrouter_api_key")
+        from agent import stream_agent
+        return StreamingResponse(
+            stream_agent(api_key, model_name, messages_dict, payload.chat_id, sources_metadata, background_tasks, clean_user_prompt, original_messages, config, payload.approved_tool_call),
+            media_type="text/event-stream"
+        )
     
     if is_gemini_model:
         api_key = config.get("gemini_api_key")
