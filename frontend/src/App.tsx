@@ -78,6 +78,7 @@ interface SettingsConfig {
   serper_api_key?: string;
   searxng_url?: string;
   brain_directory?: string;
+  memory_mode?: string;
 }
 
 const API_BASE = '';
@@ -592,7 +593,6 @@ function App() {
   const [isCopied, setIsCopied] = useState(false);
   const [researchError, setResearchError] = useState<string | null>(null);
   
-  // Settings States
   const [settings, setSettings] = useState<SettingsConfig>({
     gemini_api_key: '',
     openrouter_api_key: '',
@@ -604,7 +604,8 @@ function App() {
     google_api_key: '',
     google_cx: '',
     serper_api_key: '',
-    brain_directory: ''
+    brain_directory: '',
+    memory_mode: 'smart'
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [showGeminiKey, setShowGeminiKey] = useState(false);
@@ -614,6 +615,7 @@ function App() {
   const [geminiKeyInput, setGeminiKeyInput] = useState('');
   const [openrouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [brainDirectoryInput, setBrainDirectoryInput] = useState('');
+  const [memoryModeInput, setMemoryModeInput] = useState('smart');
   
   // Brain status & indexing states
   const [brainStatus, setBrainStatus] = useState<{
@@ -734,6 +736,7 @@ function App() {
         setSerperKeyInput(data.serper_api_key || '');
         setSearxngUrlInput(data.searxng_url || 'http://127.0.0.1:8888');
         setBrainDirectoryInput(data.brain_directory || '');
+        setMemoryModeInput(data.memory_mode || 'smart');
         
         if (data.preferred_model && !activeChatId) {
           setSelectedModel(data.preferred_model);
@@ -1316,7 +1319,8 @@ function App() {
           google_cx: googleCxInput,
           serper_api_key: serperKeyInput,
           searxng_url: searxngUrlInput,
-          brain_directory: brainDirectoryInput
+          brain_directory: brainDirectoryInput,
+          memory_mode: memoryModeInput
         }),
       });
 
@@ -3381,6 +3385,27 @@ function App() {
                 </div>
               ) : (
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                  <div className="form-group" style={{ marginBottom: '16px', borderBottom: '1px solid var(--border-glass)', paddingBottom: '16px' }}>
+                    <label className="form-label" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <Brain size={16} color="var(--accent-purple)" />
+                      Memory Extraction Mode
+                    </label>
+                    <select
+                      className="custom-select"
+                      value={memoryModeInput}
+                      onChange={e => setMemoryModeInput(e.target.value)}
+                    >
+                      <option value="smart">Smart (Recommended - checks for keywords)</option>
+                      <option value="always">Always (Analyzes every message)</option>
+                      <option value="never">Never (Disables automatic memory)</option>
+                    </select>
+                    <span className="form-hint" style={{ marginTop: '6px', display: 'block' }}>
+                      {memoryModeInput === 'smart' && "Only extracts facts when you use words like 'remember', 'prefer', 'like', etc. Saves tokens."}
+                      {memoryModeInput === 'always' && "Extracts facts from every conversation snippet. Can lead to redundant processing."}
+                      {memoryModeInput === 'never' && "Stops background extraction entirely. You can still manually add facts below."}
+                    </span>
+                  </div>
+
                   <div className="catalog-search-wrapper" style={{ marginBottom: '12px' }}>
                     <div style={{ display: 'flex', gap: '8px' }}>
                       <input

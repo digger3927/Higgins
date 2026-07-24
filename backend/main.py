@@ -66,6 +66,8 @@ class Settings(BaseModel):
     # Integrations
     slack_bot_token: Optional[str] = None
     telegram_bot_token: Optional[str] = None
+    # Memory
+    memory_mode: Optional[str] = None
 
 class Message(BaseModel):
     role: str
@@ -104,7 +106,8 @@ def load_settings() -> Dict[str, Any]:
         "brain_directory": "",
         "active_project_path": "",
         "slack_bot_token": os.getenv("SLACK_BOT_TOKEN", ""),
-        "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", "")
+        "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", ""),
+        "memory_mode": "smart"
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -202,6 +205,10 @@ async def update_settings(settings: Settings):
     # Project Settings
     if settings.active_project_path is not None:
         current["active_project_path"] = settings.active_project_path
+        
+    # Memory Settings
+    if settings.memory_mode is not None:
+        current["memory_mode"] = settings.memory_mode
     
     save_settings(current)
     return current
@@ -1210,6 +1217,23 @@ async def index_brain():
 async def extract_memories_task(user_input: str, assistant_response: str):
     try:
         config = load_settings()
+        memory_mode = config.get("memory_mode", "smart")
+        
+        if memory_mode == "never":
+            logger.info("Memory extraction is disabled ('never' mode).")
+            return
+            
+        if memory_mode == "smart":
+            user_input_lower = user_input.lower()
+            trigger_words = [
+                "remember", "prefer", "favorite", "dislike", "like", 
+                "hobby", "hobbies", "interest", "my name", "i live", "hate", "love",
+                "call me", "i am a", "i work as", "want you to"
+            ]
+            if not any(word in user_input_lower for word in trigger_words):
+                logger.info("Smart mode: No memory trigger keywords found. Skipping extraction.")
+                return
+                
         model_name = config.get("preferred_model", "google/gemini-2.5-flash")
         
         mem_db = load_memory_db()
@@ -1218,7 +1242,7 @@ async def extract_memories_task(user_input: str, assistant_response: str):
         
         extraction_prompt = f"""You are the long-term memory manager for Higgins, an AI assistant.
 Analyze the following conversation snippet.
-If the user shares any personal preferences, name, age, hobbies, likes/dislikes, or explicitly asks Higgins to remember something (e.g. "remember, I don't like tuna" or "I prefer writing code in Python"), extract them as concise, standalone declarative facts in the third person (e.g., 'User does not like tuna', 'User prefers Python for coding').
+If the user shares any personal preferences, name, location, age, hobbies, likes/dislikes, or explicitly asks Higgins to remember something (e.g. "remember, I don't like tuna" or "I prefer writing code in Python"), extract them as concise, standalone declarative facts in the third person (e.g., 'User does not like tuna', 'User prefers Python for coding').
 
 Existing Memories:
 {existing_str}
@@ -1228,12 +1252,15 @@ User: {user_input}
 Higgins: {assistant_response}
 
 Instructions:
-1. Extract ONLY facts that are NOT already in the existing memories list above.
-2. Output each extracted fact as a standalone bullet point starting with a hyphen (e.g., '- User prefers Python').
-3. If no new facts or preferences were shared, output exactly the word 'NONE'.
-4. Do not output any intro, explanations, or formatting other than the bullet list or 'NONE'."""
+1. Extract ONLY personal facts, traits, or preferences about the user.
+2. DO NOT extract general knowledge, historical facts, scientific facts, or technical/coding instructions (e.g., do NOT extract "The Domino Theory posited...", "The Gulf of Tonkin Resolution was...", "User wants to query F1 api").
+3. DO NOT extract comments about Higgins' search capabilities or instructions for the current session.
+4. Output each extracted fact as a standalone bullet point starting with a hyphen (e.g., '- User prefers Python').
+5. Output ONLY facts that are NOT already represented in the existing memories list above.
+6. If no new personal facts or preferences were shared, output exactly the word 'NONE'.
+7. Do NOT include any introduction, conversational filler, explanation, or meta-commentary (e.g., do NOT output "Only two facts were extracted..."). Output ONLY the bulleted list or 'NONE'."""
 
-        logger.info(f"Triggering background memory extraction using model: {model_name}")
+        logger.info(f"Triggering background memory extraction using model: {model_name} (mode: {memory_mode})")
         
         output_text = ""
         is_gemini = "gemini" in model_name.lower()
