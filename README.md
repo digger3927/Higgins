@@ -76,6 +76,9 @@ A built-in lightweight workspace document tool. Higgins will:
 - **Rename** chats with a double-click
 - Full **Markdown rendering** with syntax highlighting in responses
 
+### 📱 Messaging Integrations (Telegram & Slack)
+Chat with Higgins on the go! Connect Higgins to Telegram or Slack. When you run `start.sh`, it automatically exposes your local instance securely via Localtunnel and registers the Telegram webhook. This lets you chat with your local AI assistant from your phone anywhere in the world, while your data and documents stay safely on your machine.
+
 ### ⏹️ Stop Generation
 Changed your mind mid-response? Hit the **Stop** button to cancel immediately and keep whatever was generated so far.
 
@@ -129,6 +132,13 @@ cd ..
 That's it. Open [http://localhost:5173](http://localhost:5173) and Higgins will be waiting.
 
 On first launch, click **Settings** in the sidebar to configure your API keys. Higgins will remember them across restarts.
+
+### 📱 Setting up Telegram (Optional)
+To chat with Higgins from your phone:
+1. Open Telegram and search for **@BotFather**.
+2. Send `/newbot` and follow the prompts to create your bot and get the API token.
+3. Open `config.json` in the project root and add your token: `"telegram_bot_token": "YOUR_TOKEN_HERE"` (or set `TELEGRAM_BOT_TOKEN` in your environment).
+4. Restart Higgins using `./start.sh`. The script will automatically start a secure local tunnel and register your bot's webhook.
 
 ---
 

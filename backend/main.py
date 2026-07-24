@@ -63,6 +63,9 @@ class Settings(BaseModel):
     brain_directory: Optional[str] = None
     # Active Project Path
     active_project_path: Optional[str] = None
+    # Integrations
+    slack_bot_token: Optional[str] = None
+    telegram_bot_token: Optional[str] = None
 
 class Message(BaseModel):
     role: str
@@ -99,7 +102,9 @@ def load_settings() -> Dict[str, Any]:
         "serper_api_key": os.getenv("SERPER_API_KEY", ""),
         "searxng_url": os.getenv("SEARXNG_URL", "http://127.0.0.1:8888"),
         "brain_directory": "",
-        "active_project_path": ""
+        "active_project_path": "",
+        "slack_bot_token": os.getenv("SLACK_BOT_TOKEN", ""),
+        "telegram_bot_token": os.getenv("TELEGRAM_BOT_TOKEN", "")
     }
     if os.path.exists(CONFIG_FILE):
         try:
@@ -1644,7 +1649,161 @@ async def delete_research_session(session_id: str):
     save_research_sessions(db)
     return {"session_id": session_id, "status": "deleted"}
 
+# Webhook Integrations (Slack & Telegram)
+
+def get_or_create_integration_chat(platform: str, user_id: str, model_name: str) -> str:
+    db = load_chats_db()
+    integration_key = f"{platform}_{user_id}"
+    
+    if "integrations" not in db:
+        db["integrations"] = {}
+        
+    if integration_key in db["integrations"]:
+        chat_id = db["integrations"][integration_key]
+        if chat_id in db["chats"]:
+            return chat_id
+            
+    chat_id = str(uuid.uuid4())
+    db["chats"][chat_id] = {
+        "title": f"{platform.capitalize()} Chat - {user_id}",
+        "messages": [],
+        "model": model_name,
+        "created_at": time.time(),
+        "updated_at": time.time()
+    }
+    db["integrations"][integration_key] = chat_id
+    save_chats_db(db)
+    return chat_id
+
+async def get_full_chat_response(payload: ChatPayload, background_tasks: BackgroundTasks) -> str:
+    response = await chat(payload, background_tasks)
+    full_text = ""
+    async for chunk in response.body_iterator:
+        if isinstance(chunk, bytes):
+            chunk = chunk.decode("utf-8")
+        if chunk.startswith("data: "):
+            chunk_data = chunk[6:].strip()
+            if chunk_data == "[DONE]":
+                break
+            try:
+                data = json.loads(chunk_data)
+                if data.get("type") == "chunk":
+                    full_text += data.get("content", "")
+            except:
+                pass
+    return full_text
+
+async def process_slack_message(event: dict, background_tasks: BackgroundTasks):
+    config = load_settings()
+    bot_token = config.get("slack_bot_token")
+    if not bot_token:
+        logger.error("Slack bot token not configured.")
+        return
+
+    channel = event.get("channel")
+    user_id = event.get("user")
+    text = event.get("text", "")
+
+    if not channel or not text or not user_id:
+        return
+
+    model_name = config.get("preferred_model", "google/gemini-2.5-flash")
+    chat_id = get_or_create_integration_chat("slack", channel, model_name)
+    db = load_chats_db()
+    messages = db["chats"][chat_id]["messages"]
+    
+    messages.append({"role": "user", "content": text})
+    payload = ChatPayload(
+        chat_id=chat_id,
+        messages=[Message(role=m["role"], content=m["content"]) for m in messages],
+        model=model_name,
+        web_search_enabled=True,
+        local_brain_enabled=True,
+        previous_chats_context_enabled=True
+    )
+    
+    response_text = await get_full_chat_response(payload, background_tasks)
+    
+    if not response_text:
+        response_text = "Sorry, I couldn't generate a response."
+
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            "https://slack.com/api/chat.postMessage",
+            headers={"Authorization": f"Bearer {bot_token}"},
+            json={"channel": channel, "text": response_text}
+        )
+
+@app.post("/api/webhooks/slack")
+async def slack_webhook(request: Request, background_tasks: BackgroundTasks):
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"status": "error"}
+
+    if payload.get("type") == "url_verification":
+        return {"challenge": payload.get("challenge")}
+
+    if "event" in payload and payload["event"].get("type") == "message":
+        if "bot_id" not in payload["event"]:
+            background_tasks.add_task(process_slack_message, payload["event"], background_tasks)
+
+    return {"status": "ok"}
+
+async def process_telegram_message(message: dict, background_tasks: BackgroundTasks):
+    config = load_settings()
+    bot_token = config.get("telegram_bot_token")
+    if not bot_token:
+        logger.error("Telegram bot token not configured.")
+        return
+
+    chat_info = message.get("chat", {})
+    chat_id_num = chat_info.get("id")
+    text = message.get("text", "")
+
+    if not chat_id_num or not text:
+        return
+        
+    chat_id_str = str(chat_id_num)
+
+    model_name = config.get("preferred_model", "google/gemini-2.5-flash")
+    internal_chat_id = get_or_create_integration_chat("telegram", chat_id_str, model_name)
+    db = load_chats_db()
+    messages = db["chats"][internal_chat_id]["messages"]
+    
+    messages.append({"role": "user", "content": text})
+    payload = ChatPayload(
+        chat_id=internal_chat_id,
+        messages=[Message(role=m["role"], content=m["content"]) for m in messages],
+        model=model_name,
+        web_search_enabled=True,
+        local_brain_enabled=True,
+        previous_chats_context_enabled=True
+    )
+    
+    response_text = await get_full_chat_response(payload, background_tasks)
+    
+    if not response_text:
+        response_text = "Sorry, I couldn't generate a response."
+
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            f"https://api.telegram.org/bot{bot_token}/sendMessage",
+            json={"chat_id": chat_id_num, "text": response_text}
+        )
+
+@app.post("/api/webhooks/telegram")
+async def telegram_webhook(request: Request, background_tasks: BackgroundTasks):
+    try:
+        payload = await request.json()
+    except Exception:
+        return {"status": "error"}
+
+    if "message" in payload:
+        background_tasks.add_task(process_telegram_message, payload["message"], background_tasks)
+
+    return {"status": "ok"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-
