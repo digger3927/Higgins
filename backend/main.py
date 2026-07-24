@@ -74,6 +74,7 @@ class ChatPayload(BaseModel):
     model: str
     web_search_enabled: Optional[bool] = False
     local_brain_enabled: Optional[bool] = False
+    previous_chats_context_enabled: Optional[bool] = False
 
 class ChatUpdatePayload(BaseModel):
     title: Optional[str] = None
@@ -1415,7 +1416,41 @@ Always keep GEMINI.MD updated with goals, timeline notes, and files you create.
 
 """
         
-    context_prefix = f"{memory_block}{project_block}"
+    previous_chats_block = ""
+    if getattr(payload, "previous_chats_context_enabled", False) and clean_user_prompt:
+        try:
+            user_query_lower = clean_user_prompt.lower()
+            query_words = set([w for w in user_query_lower.split() if len(w) > 4])
+            
+            relevant_exchanges = []
+            for cid, cdata in db.get("chats", {}).items():
+                if cid == payload.chat_id:
+                    continue
+                chat_msgs = cdata.get("messages", [])
+                match_score = 0
+                for msg in chat_msgs:
+                    if msg.get("role") == "user":
+                        msg_text = msg.get("content", "").lower()
+                        score = sum(1 for w in query_words if w in msg_text)
+                        if score > 0:
+                            match_score += score
+                
+                if match_score > 0:
+                    exchange_text = f"Chat Title: {cdata.get('title', 'Unknown')}\n"
+                    for msg in chat_msgs[-4:]:
+                        role = msg.get("role", "")
+                        content = msg.get("content", "")
+                        exchange_text += f"{role.capitalize()}: {content[:300]}...\n"
+                    relevant_exchanges.append((match_score, exchange_text))
+            
+            if relevant_exchanges:
+                relevant_exchanges.sort(key=lambda x: x[0], reverse=True)
+                top_exchanges = [ex[1] for ex in relevant_exchanges[:3]]
+                previous_chats_block = "[Previous Relevant Conversations]\n" + "\n\n".join(top_exchanges) + "\n\n"
+        except Exception as e:
+            logger.error(f"Error searching previous chats: {e}")
+
+    context_prefix = f"{memory_block}{project_block}{previous_chats_block}"
     
     # Preserve the original user messages (before context injection) for saving to chat history
     original_messages = [{"role": m["role"], "content": m["content"]} for m in messages_dict]

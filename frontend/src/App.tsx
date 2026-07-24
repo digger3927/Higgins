@@ -6,7 +6,6 @@ import {
   MessageSquare, 
   Eye, 
   EyeOff, 
-  Cpu, 
   Sparkles, 
   Info,
   Pin,
@@ -29,7 +28,8 @@ import {
   ChevronDown,
   ChevronRight,
   Save,
-  X
+  X,
+  History
 } from 'lucide-react';
 import { marked } from 'marked';
 import './App.css';
@@ -531,6 +531,7 @@ function App() {
     return saved === null ? true : saved === 'true';
   });
   const [localBrainEnabled, setLocalBrainEnabled] = useState(() => localStorage.getItem('localBrainEnabled') === 'true');
+  const [previousChatsContextEnabled, setPreviousChatsContextEnabled] = useState(() => localStorage.getItem('previousChatsContextEnabled') === 'true');
   const [expandedSources, setExpandedSources] = useState<Record<number, boolean>>({});
   
   // Deep Research States
@@ -1545,7 +1546,8 @@ function App() {
           messages: updatedMessages,
           model: selectedModel,
           web_search_enabled: webSearchEnabled,
-          local_brain_enabled: localBrainEnabled
+          local_brain_enabled: localBrainEnabled,
+          previous_chats_context_enabled: previousChatsContextEnabled
         }),
         signal: controller.signal,
       });
@@ -2206,35 +2208,6 @@ function App() {
 
             <div className="sidebar-divider"></div>
 
-            {/* Model Selector */}
-            <div className="model-selector-container">
-              <div className="sidebar-label">Active Model</div>
-              <select 
-                className="custom-select" 
-                value={selectedModel} 
-                onChange={handleModelChange}
-              >
-                {models.filter(m => m.provider === 'ollama').length > 0 && (
-                  <optgroup label="Local Models (Ollama)">
-                    {models.filter(m => m.provider === 'ollama').map(m => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-                {models.filter(m => m.provider !== 'ollama').length > 0 && (
-                  <optgroup label="Cloud Models (API)">
-                    {models.filter(m => m.provider !== 'ollama').map(m => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-            </div>
-
             {/* Conversations Lists */}
             <div className="chats-section" style={{ flex: 1, overflowY: 'auto' }}>
               {/* Pinned Chats */}
@@ -2537,18 +2510,7 @@ function App() {
           {activeTab === 'chat' ? (
         <main className="chat-workspace">
         <header className="chat-header">
-          <div className="header-model-info">
-            <Cpu size={16} className="nav-item-icon" />
-            <span className="header-model-title">
-              {models.find(m => m.id === selectedModel)?.name || selectedModel}
-            </span>
-            <span className={`api-status-pill ${isKeyConfigured() ? '' : 'missing'}`}>
-              <span className="pulse-dot" style={{ backgroundColor: isKeyConfigured() ? 'var(--accent-green)' : 'var(--accent-red)', boxShadow: `0 0 8px ${isKeyConfigured() ? 'var(--accent-green)' : 'var(--accent-red)'}` }}></span>
-              {models.find(m => m.id === selectedModel)?.provider === 'ollama' 
-                ? 'Ollama Local' 
-                : isKeyConfigured() ? 'API Ready' : 'API Key Missing'}
-            </span>
-          </div>
+          <div></div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <div style={{ color: 'var(--text-muted)', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -2688,6 +2650,44 @@ function App() {
             />
             <div className="chat-controls">
               <div className="chat-input-hints" style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                <select 
+                  value={selectedModel} 
+                  onChange={handleModelChange}
+                  disabled={isGenerating}
+                  style={{
+                    background: 'transparent',
+                    border: '1px solid var(--border-glass)',
+                    color: 'var(--text-color)',
+                    fontSize: '12px',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    outline: 'none',
+                    height: '24px',
+                    maxWidth: '150px',
+                    textOverflow: 'ellipsis'
+                  }}
+                  title="Select Model"
+                >
+                  {models.filter(m => m.provider === 'ollama').length > 0 && (
+                    <optgroup label="Local (Ollama)">
+                      {models.filter(m => m.provider === 'ollama').map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {models.filter(m => m.provider !== 'ollama').length > 0 && (
+                    <optgroup label="Cloud (API)">
+                      {models.filter(m => m.provider !== 'ollama').map(m => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
                 <button
                   type="button"
                   className={`search-toggle-btn ${webSearchEnabled ? 'active' : ''}`}
@@ -2744,6 +2744,35 @@ function App() {
                 >
                   <Database size={14} className={localBrainEnabled ? 'pulse-icon-purple' : ''} />
                   <span>Local Brain</span>
+                </button>
+
+                <button
+                  type="button"
+                  className={`search-toggle-btn ${previousChatsContextEnabled ? 'active-green' : ''}`}
+                  title="Toggle Previous Chats Context"
+                  onClick={() => {
+                    const val = !previousChatsContextEnabled;
+                    setPreviousChatsContextEnabled(val);
+                    localStorage.setItem('previousChatsContextEnabled', String(val));
+                  }}
+                  disabled={!isKeyConfigured() || isGenerating}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: previousChatsContextEnabled ? 'var(--accent-green, #10b981)' : 'var(--text-muted)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    fontSize: '12px',
+                    fontWeight: 500,
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    transition: 'var(--transition-smooth)'
+                  }}
+                >
+                  <History size={14} className={previousChatsContextEnabled ? 'pulse-icon-green' : ''} />
+                  <span>Prev Chats</span>
                 </button>
 
                 <span className="sidebar-divider-v" style={{ width: '1px', height: '12px', background: 'var(--border-glass)' }}></span>
